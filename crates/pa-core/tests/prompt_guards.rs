@@ -584,3 +584,47 @@ fn generic_mcp_skill_renders_in_the_prompt_inventory() {
         .assembled
         .contains("await mcp.list_tools(\"notion\")"));
 }
+
+// Async turn discipline
+
+/// The usage layer pins the turn contract: long commands are backgrounded and never
+/// inline-awaited, the turn ends with a short text reply while long work runs or nothing
+/// actionable remains, awaits stay bounded, and notifications are the trusted wake mechanism.
+/// Observed gap (async-discipline eval, hosted baseline xdhf6w72abxj8xjuvb7ldzzs): the D3
+/// turn-held/sleep/poll violation rate sat at 0.85 — agents slept 97-157 s through turns and
+/// held turns 166 s while builds ran inline, against the grader's 60 s inline-span contract.
+#[test]
+fn usage_layer_pins_the_async_turn_contract() {
+    let options = BuildSystemPromptOptions {
+        cwd: "/w".to_string(),
+        messages_path: Some("/log.jsonl".to_string()),
+        skills: sorted_bundled_skills(),
+        selected_tools: Some(vec!["ipython"]),
+        ..Default::default()
+    };
+    let breakdown = system_prompt_breakdown(&options);
+    assert!(
+        breakdown
+            .assembled
+            .contains("A command expected to run longer than 60 seconds is never inline-awaited"),
+        "the 60 s inline-span limit (the async-discipline grader's contract) must be pinned"
+    );
+    assert!(
+        breakdown
+            .assembled
+            .contains("When long work is running, or nothing actionable remains, end the turn with a short text reply"),
+        "the turn must end with a short text reply instead of being held open"
+    );
+    assert!(
+        breakdown
+            .assembled
+            .contains("`await` is bounded to the short operation needed to start work or inspect a result that is immediately needed"),
+        "awaits must stay bounded to immediately-needed results"
+    );
+    assert!(
+        breakdown
+            .assembled
+            .contains("bash completion notifications, subagent replies, and heartbeats are the trusted wake mechanism"),
+        "notifications must be pinned as the trusted wake mechanism"
+    );
+}
