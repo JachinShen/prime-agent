@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import resource
@@ -536,8 +537,8 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
             pids: list[int] = []
             original_init = bash_module.BashHandle.__init__
 
-            def capturing_init(handle_self, command):
-                original_init(handle_self, command)
+            def capturing_init(handle_self, command, *args, **kwargs):
+                original_init(handle_self, command, *args, **kwargs)
                 pids.append(handle_self._pid)
 
             async def run_oneshot():
@@ -564,8 +565,8 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
             pids: list[int] = []
             original_init = bash_module.BashHandle.__init__
 
-            def capturing_init(handle_self, command):
-                original_init(handle_self, command)
+            def capturing_init(handle_self, command, *args, **kwargs):
+                original_init(handle_self, command, *args, **kwargs)
                 pids.append(handle_self._pid)
 
             async def run_oneshot():
@@ -639,8 +640,8 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         pids: list[int] = []
         original_init = bash_module.BashHandle.__init__
 
-        def capturing_init(handle_self, command):
-            original_init(handle_self, command)
+        def capturing_init(handle_self, command, *args, **kwargs):
+            original_init(handle_self, command, *args, **kwargs)
             pids.append(handle_self._pid)
 
         async def run_oneshot():
@@ -1375,6 +1376,77 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
             result = await bash("echo ok")
         self.assertEqual(result.exit_code, 0)
         self.assertIn("ok", result.output)
+
+
+class BoundedAwaitTest(unittest.IsolatedAsyncioTestCase):
+    """The yield_after contract: with completion notices wired (the kernel
+    bootstrap call) an await degrades to the live handle past its bound;
+    without them every await stays unbounded (nothing wakes a collector)."""
+
+    def _wire_notices(self) -> None:
+        bash_module._set_completion_notices_wired(True)
+        self.addCleanup(bash_module._set_completion_notices_wired, False)
+        bash_module._degrade_hints_written = 0
+        self.addCleanup(setattr, bash_module, "_degrade_hints_written", 0)
+
+    async def test_bounded_await_degrades_to_the_running_handle(self):
+        self._wire_notices()
+        handle = bash("sleep 1.2", yield_after=0.3)
+        returned = await handle
+        self.assertIs(returned, handle)
+        self.assertTrue(returned.running)
+        # The degrade abandons the wait, never the command: it still completes.
+        result = await asyncio.wait_for(handle._wait(), 10)
+        self.assertEqual(result.exit_code, 0)
+
+    async def test_bounded_await_returns_the_result_within_the_window(self):
+        self._wire_notices()
+        result = await bash("printf quick", yield_after=5)
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("quick", result.output)
+        with self.assertRaises(ValueError):
+            bash("echo no", yield_after=0)
+        with self.assertRaises(ValueError):
+            bash("echo no", yield_after=-1)
+
+    async def test_daemonless_await_ignores_the_bound(self):
+        # No completion notices wired: no wake-up exists to collect a
+        # degraded command, so the await stays unbounded and yield_after
+        # has no effect.
+        result = await bash("sleep 1", yield_after=0.2)
+        self.assertEqual(result.exit_code, 0)
+
+    async def test_cancelling_a_later_await_of_a_degraded_handle_only_waits(self):
+        self._wire_notices()
+        handle = bash("sleep 1.5", yield_after=0.3)
+        self.assertIs(await handle, handle)
+
+        async def consume():
+            return await handle
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        # The degrade released the handle: a cancelled later await stops
+        # waiting without killing the still-running command.
+        self.assertTrue(handle.running)
+        result = await asyncio.wait_for(handle._wait(), 10)
+        self.assertEqual(result.exit_code, 0)
+
+    async def test_degrade_hints_are_budgeted_to_the_first_three(self):
+        self._wire_notices()
+        handles = []
+        hints = io.StringIO()
+        with mock.patch.object(sys, "stderr", hints):
+            for _ in range(5):
+                handle = bash("sleep 3", yield_after=0.2)
+                handles.append(handle)
+                self.assertIs(await handle, handle)
+        for handle in handles:
+            handle.kill(grace=0.1)
+        self.assertEqual(hints.getvalue().count("still running after"), 3)
 
 
 async def _poll_group_dead(pgid: int, timeout: float = 5.0) -> None:
