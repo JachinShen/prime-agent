@@ -11,7 +11,6 @@
 //! notice then wakes the idle session. Everything is asserted by transcript
 //! event ORDER, not wall-clock caps.
 
-#![allow(clippy::large_futures)]
 // 64-bit-only targets; the narrowing casts sit at bounded OS boundaries.
 #![allow(
     clippy::cast_possible_truncation,
