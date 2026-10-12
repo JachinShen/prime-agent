@@ -100,10 +100,6 @@ pub struct KernelBootstrapStats {
 /// Reports kernel bootstrap results (the `kernel_bootstrap_*` session counters).
 pub type KernelBootstrapResultHandler = Arc<dyn Fn(KernelBootstrapStats) + Send + Sync>;
 
-/// Decides at each kernel boot whether a Python skill is pre-imported; the
-/// skill stays installed in the kernel venv either way.
-pub(crate) type PythonSkillPreimportFilter = Arc<dyn Fn(&KernelPythonSkill) -> bool + Send + Sync>;
-
 #[derive(Default, Clone)]
 pub struct IpythonKernelProvisionerOptions {
     /// Python override. Must have prime-agent-runtime installed.
@@ -117,8 +113,6 @@ pub struct IpythonKernelProvisionerOptions {
     pub session_id: Option<String>,
     pub host_handlers: HostRequestHandlers,
     pub python_skills: Vec<KernelPythonSkill>,
-    /// Narrows which `python_skills` a boot pre-imports (all when `None`).
-    pub preimport_filter: Option<PythonSkillPreimportFilter>,
     /// Artifact directory of a persistent session; the revivable snapshot and
     /// the stderr log live there. `None` for ephemeral sessions.
     pub snapshot_dir: Option<PathBuf>,
@@ -1041,21 +1035,10 @@ async fn start_kernel_impl(
         gate().await;
     }
     let snapshot_dir = options.snapshot_dir.clone();
-    let preimported: Vec<KernelPythonSkill> = options
-        .python_skills
-        .iter()
-        .filter(|skill| {
-            options
-                .preimport_filter
-                .as_ref()
-                .is_none_or(|preimport| preimport(skill))
-        })
-        .cloned()
-        .collect();
     // The bounded-await default keys on the bash.completed host handler:
     // one source of truth (the registry the daemon registers the notice in).
     let bootstrap_code = build_rlm_bootstrap_code(
-        &preimported,
+        &options.python_skills,
         options
             .host_handlers
             .get(BASH_COMPLETED_REQUEST_TYPE)
