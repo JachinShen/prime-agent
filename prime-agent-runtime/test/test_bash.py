@@ -1275,17 +1275,11 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(bash_module.os, "killpg", side_effect=OSError):
             self.assertFalse(bash_module._signal_group(1234567, signal.SIGKILL))
 
-    async def test_journal_configured_but_unwritable_kills_child_and_raises(self):
+    async def test_journal_configured_but_unwritable_stays_best_effort(self):
+        # TS parity (#2524): a journal that cannot be written means the
+        # command runs untracked, never that the spawn dies.
         with tempfile.TemporaryDirectory() as tmp:
             marker = os.path.join(tmp, "marker")
-            pids: list[int] = []
-            real_popen = subprocess.Popen
-
-            def capturing_popen(*args, **kwargs):
-                proc = real_popen(*args, **kwargs)
-                pids.append(proc.pid)
-                return proc
-
             with mock.patch.dict(
                 os.environ,
                 {
@@ -1293,14 +1287,9 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                     "PRIME_AGENT_KERNEL_OWNER_PID": str(os.getpid()),
                 },
             ):
-                with mock.patch.object(bash_module.subprocess, "Popen", capturing_popen):
-                    with self.assertRaises(RuntimeError):
-                        bash(f"touch {marker}")
-            await _poll_group_dead(pids[0])
-            await asyncio.sleep(0.2)
-            self.assertFalse(os.path.exists(marker))
-            with bash_module._live_lock:
-                self.assertFalse(bash_module._live_handles)
+                result = await asyncio.wait_for(bash(f"touch {marker}"), timeout=5)
+            self.assertEqual(result.exit_code, 0)
+            self.assertTrue(os.path.exists(marker))
 
     async def test_journal_bad_owner_pid_rejects(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1315,7 +1304,10 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(RuntimeError):
                     bash("echo hi")
 
-    async def test_missing_start_id_rejects_when_configured(self):
+    async def test_missing_start_id_records_identity_free(self):
+        # Identity-free records (no processStartId) are valid and still
+        # safely reaped on POSIX via the group-scoped kill: the spawn must
+        # not fail when the start id is unavailable.
         with tempfile.TemporaryDirectory() as tmp:
             journal = os.path.join(tmp, "journal.jsonl")
             with mock.patch.dict(
@@ -1326,12 +1318,17 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                 },
             ):
                 with mock.patch.object(bash_module, "_process_start_id", return_value=None):
-                    with self.assertRaises(RuntimeError):
-                        bash("sleep 30")
+                    result = await bash("echo ok")
+            self.assertEqual(result.exit_code, 0)
+            self.assertIn("ok", result.output)
+            with open(journal) as f:
+                record = json.loads(next(line for line in f if line.strip()))
+            self.assertNotIn("processStartId", record)
+            self.assertTrue(record["active"])
 
-    async def test_journal_short_write_rejects_when_configured(self):
-        # A partial os.write would leave a truncated JSON line the host
-        # discards; enrollment must treat it as failure.
+    async def test_journal_short_write_stays_best_effort(self):
+        # A zero-write leaves no complete record (the host discards truncated
+        # lines) but enrollment still returns True: the command is alive.
         with tempfile.TemporaryDirectory() as tmp:
             journal = os.path.join(tmp, "journal.jsonl")
 
@@ -1346,7 +1343,8 @@ class BashTest(unittest.IsolatedAsyncioTestCase):
                 },
             ):
                 with mock.patch.object(bash_module.os, "write", short_write):
-                    self.assertFalse(bash_module._record_journal(os.getpid(), active=False))
+                    self.assertTrue(bash_module._record_journal(os.getpid(), active=False))
+            self.assertEqual(os.path.getsize(journal), 0)
 
     async def test_journal_partial_writes_complete_the_record(self):
         with tempfile.TemporaryDirectory() as tmp:
