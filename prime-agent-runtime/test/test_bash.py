@@ -1408,6 +1408,7 @@ class BoundedAwaitTest(unittest.IsolatedAsyncioTestCase):
         result = await bash("printf quick", yield_after=5)
         self.assertEqual(result.exit_code, 0)
         self.assertIn("quick", result.output)
+        self.assertIs(result.running, False)
         with self.assertRaises(ValueError):
             bash("echo no", yield_after=0)
         with self.assertRaises(ValueError):

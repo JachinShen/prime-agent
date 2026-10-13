@@ -559,7 +559,9 @@ fn bounded_await_contract_render_is_daemon_only() {
     let daemonless = system_prompt_breakdown(&options);
     assert!(
         !daemonless.assembled.contains("yield_after")
-            && !daemonless.assembled.contains("[bash-done]"),
+            && !daemonless.assembled.contains("[bash-done]")
+            && !daemonless.assembled.contains("still-running snapshot")
+            && !daemonless.assembled.contains("about 10 seconds"),
         "the daemonless session prompt must not leak the bounded-await contract: {0}",
         daemonless.assembled
     );

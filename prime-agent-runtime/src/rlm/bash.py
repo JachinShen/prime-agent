@@ -272,6 +272,13 @@ class BashResult:
     output: str
     duration: float
 
+    @property
+    def running(self) -> bool:
+        # The discriminator the prompt teaches: a finished result is never
+        # running (BashSnapshot.running is True). A property, not a field, so
+        # repr, equality, and positional construction stay unchanged.
+        return False
+
 
 @dataclass(frozen=True)
 class BashSnapshot:
