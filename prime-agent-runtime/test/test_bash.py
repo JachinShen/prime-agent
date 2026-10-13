@@ -1389,14 +1389,18 @@ class BoundedAwaitTest(unittest.IsolatedAsyncioTestCase):
         bash_module._degrade_hints_written = 0
         self.addCleanup(setattr, bash_module, "_degrade_hints_written", 0)
 
-    async def test_bounded_await_degrades_to_the_running_handle(self):
+    async def test_bounded_await_degrades_to_a_snapshot(self):
         self._wire_notices()
-        handle = bash("sleep 1.2", yield_after=0.3)
+        handle = bash("sleep 0.5", yield_after=0.3)
         returned = await handle
-        self.assertIs(returned, handle)
+        self.assertIsInstance(returned, bash_module.BashSnapshot)
+        self.assertIs(returned.handle, handle)
+        self.assertIsNone(returned.exit_code)
         self.assertTrue(returned.running)
-        # The degrade abandons the wait, never the command: it still completes.
-        result = await asyncio.wait_for(handle._wait(), 10)
+        self.assertIsInstance(returned.output, str)
+        # The prompt's collect idiom: re-awaiting the live handle returns the
+        # final result once the command finishes inside the window.
+        result = await returned.handle
         self.assertEqual(result.exit_code, 0)
 
     async def test_bounded_await_returns_the_result_within_the_window(self):
@@ -1419,7 +1423,8 @@ class BoundedAwaitTest(unittest.IsolatedAsyncioTestCase):
     async def test_cancelling_a_later_await_of_a_degraded_handle_only_waits(self):
         self._wire_notices()
         handle = bash("sleep 1.5", yield_after=0.3)
-        self.assertIs(await handle, handle)
+        snapshot = await handle
+        self.assertIsInstance(snapshot, bash_module.BashSnapshot)
 
         async def consume():
             return await handle
@@ -1443,7 +1448,7 @@ class BoundedAwaitTest(unittest.IsolatedAsyncioTestCase):
             for _ in range(5):
                 handle = bash("sleep 3", yield_after=0.2)
                 handles.append(handle)
-                self.assertIs(await handle, handle)
+                self.assertIsInstance(await handle, bash_module.BashSnapshot)
         for handle in handles:
             handle.kill(grace=0.1)
         self.assertEqual(hints.getvalue().count("still running after"), 3)

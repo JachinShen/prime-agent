@@ -102,8 +102,9 @@ def _note_degrade(handle: "BashHandle") -> None:
     _degrade_hints_written += 1
     sys.stderr.write(
         f"bash: still running after {handle._yield_after:g}s (pid {handle._pid}); "
-        "returned the live handle. End the turn — a [bash-done] notification "
-        "arrives when it finishes.\n"
+        "returned a snapshot: r.running is True, r.output is the output so "
+        "far, r.handle is the live handle. End the turn — a [bash-done] "
+        "notification arrives when it finishes.\n"
     )
 
 
@@ -270,6 +271,31 @@ class BashResult:
     exit_code: int
     output: str
     duration: float
+
+
+@dataclass(frozen=True)
+class BashSnapshot:
+    """A degraded await's still-running snapshot (`BashHandle.__await__`).
+
+    `r.output`/`r.exit_code` read like a BashResult's — output so far and
+    None while running — and `r.running` is True; `r.handle` is the live
+    handle: collect the final result on the [bash-done] notification or with
+    `await r.handle`. The snapshot itself is not awaitable (that was #3076's
+    rejected wrapper shape).
+    """
+
+    output: str
+    exit_code: None
+    running: bool
+    duration: float
+    handle: "BashHandle"
+
+    def __repr__(self) -> str:
+        return (
+            f"<BashSnapshot running pid={self.handle._pid} "
+            f"after {self.duration:g}s: collect on the [bash-done] "
+            "notification or await .handle>"
+        )
 
 
 class _BoundedBuffer:
@@ -1011,7 +1037,7 @@ class BashHandle:
         if delivered:
             _record_journal(self._pid, active=False)
 
-    def __await__(self) -> Generator[Any, None, BashResult | BashHandle]:
+    def __await__(self) -> Generator[Any, None, BashResult | BashSnapshot]:
         # A handle awaited before any other API use is a one-shot command tied
         # to the await (kill-on-cancel); touching the handle API first marks it
         # as a deliberate background handle whose awaits only wait. Both paths
@@ -1048,8 +1074,20 @@ class BashHandle:
                 self._note_result_consumed(current_task)
         if degraded:
             _note_degrade(self)
-            return self
+            return self._degrade_snapshot()
         return cast("BashResult", result)
+
+    def _degrade_snapshot(self) -> BashSnapshot:
+        """Read the internal buffer directly: the public readers count as a
+        result read, which would withdraw the [bash-done] notice the degrade
+        must keep alive."""
+        return BashSnapshot(
+            output=self._buffer.text(),
+            exit_code=None,
+            running=True,
+            duration=time.monotonic() - self._started,
+            handle=self,
+        )
 
     def __reduce__(self) -> NoReturn:
         # Reviving a handle would resurrect a stale pid and raw fd numbers: dill
@@ -1068,9 +1106,10 @@ def bash(command: str, yield_after: float | None = None) -> BashHandle:
     `await bash(cmd)` is a one-shot: cancelling the await (e.g. an interrupt)
     kills the command's process group. In sessions whose host wires completion
     notices (the kernel bootstrap turns the bounded default on), an await that
-    is still running after `yield_after` seconds instead DEGRADES: it returns
-    this live handle, the command keeps running, and its [bash-done]
-    notification arrives on completion. `yield_after=None` uses the session
+    is still running after `yield_after` seconds instead DEGRADES: it returns a
+    BashSnapshot (r.running True, r.output the output so far, r.handle the live
+    handle) while the command keeps running, and its [bash-done] notification
+    arrives on completion. `yield_after=None` uses the session
     default (10 seconds); explicit values must be positive and are clamped to
     300. In sessions without completion notices every await stays unbounded and
     `yield_after` has no effect. `h = bash(cmd)` used as a background

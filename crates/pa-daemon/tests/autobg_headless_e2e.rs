@@ -374,19 +374,19 @@ fn a_bounded_bash_await_degrades_and_the_notice_wakes_the_session() {
     );
     assert_eq!(turn["success"], true, "turn failed: {turn}");
 
-    // Event ORDER, part 1 — the tool result shows the RUNNING handle (the
+    // Event ORDER, part 1 — the tool result shows the RUNNING snapshot (the
     // degrade hint rides the same stderr lane) and the turn settled before
     // the command finished: no completed-result repr anywhere yet.
     let after_turn = client.messages(&active_id);
-    let running_handle = after_turn
-        .find(" running command=")
-        .expect("the tool result never showed the running handle");
+    let snapshot = after_turn
+        .find("<BashSnapshot running pid=")
+        .expect("the tool result never showed the running snapshot");
     let turn_end = after_turn
         .find("turn complete")
         .expect("the follow-up assistant reply never landed");
     assert!(
-        running_handle < turn_end,
-        "the running-handle tool result must precede the turn's end: {after_turn}"
+        snapshot < turn_end,
+        "the running-snapshot tool result must precede the turn's end: {after_turn}"
     );
     assert!(
         !after_turn.contains("BashResult("),
