@@ -538,6 +538,33 @@ fn bundled_skills_match_the_ts_packaged_set() {
     );
 }
 
+/// The bounded-await contract renders only in daemon sessions: the
+/// runtime half (the degrade) exists only where the host registers the
+/// bash completion notice, so a daemonless prompt must carry no trace of it.
+#[test]
+fn bounded_await_contract_render_is_daemon_only() {
+    let mut options = BuildSystemPromptOptions {
+        cwd: "/w".to_string(),
+        messages_path: Some("/log.jsonl".to_string()),
+        skills: sorted_bundled_skills(),
+        selected_tools: Some(vec!["python_repl"]),
+        ..Default::default()
+    };
+    let daemon = system_prompt_breakdown(&options);
+    assert!(
+        daemon.assembled.contains("yield_after") && daemon.assembled.contains("[bash-done]"),
+        "the daemon session prompt must carry the bounded-await contract"
+    );
+    options.daemonless = true;
+    let daemonless = system_prompt_breakdown(&options);
+    assert!(
+        !daemonless.assembled.contains("yield_after")
+            && !daemonless.assembled.contains("[bash-done]"),
+        "the daemonless session prompt must not leak the bounded-await contract: {0}",
+        daemonless.assembled
+    );
+}
+
 /// The generic mcp skill loads through the normal markdown discovery and renders in the
 /// `<available_skills>` inventory exactly like any other markdown skill: the `[skill name
 /// location]`-style XML the TS `formatSkillsForPrompt` emits, without a `python_import` line.

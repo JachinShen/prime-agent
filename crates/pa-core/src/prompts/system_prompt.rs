@@ -324,6 +324,14 @@ fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -
             "This session has no Python REPL (`python_repl` tool): the programmatic tools described above are unavailable here."
                 .to_string(),
         );
+    } else if !options.daemonless {
+        // The bounded-await runtime half runs only where the host registers
+        // the bash completion notice (the same sessions the daemonless flag
+        // excludes), so the contract renders only there.
+        lines.push(
+            "`await bash(cmd)` waits at most `yield_after` seconds (`bash(cmd, yield_after=...)`, default 10, max 300); a command still running then comes back as its live `BashHandle` instead of a `BashResult`, so end the turn and collect it on the `[bash-done]` notification."
+                .to_string(),
+        );
     }
     if options.allow_recursion == Some(false) {
         lines.push("Subagent spawning is disabled in this session.".to_string());
