@@ -1389,6 +1389,15 @@ class BoundedAwaitTest(unittest.IsolatedAsyncioTestCase):
         bash_module._degrade_hints_written = 0
         self.addCleanup(setattr, bash_module, "_degrade_hints_written", 0)
 
+    async def test_wired_default_and_maximum_bounds(self):
+        self._wire_notices()
+        self.assertEqual(bash_module._effective_yield_after(None), 10.0)
+        self.assertEqual(bash_module._effective_yield_after(500), 300.0)
+        self.assertEqual(bash_module._effective_yield_after(0.25), 0.25)
+        bash_module._set_completion_notices_wired(False)
+        self.assertIsNone(bash_module._effective_yield_after(None))
+        self.assertIsNone(bash_module._effective_yield_after(0.25))
+
     async def test_bounded_await_degrades_to_a_snapshot(self):
         self._wire_notices()
         handle = bash("sleep 0.5", yield_after=0.3)

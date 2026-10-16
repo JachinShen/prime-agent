@@ -315,7 +315,7 @@ fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -
         // the bash completion notice (the same sessions the daemonless flag
         // excludes), so the contract renders only there.
         lines.push(
-            "`await bash(cmd)` waits at most `yield_after` seconds (`bash(cmd, yield_after=...)`, default 10, max 300); a command still running then returns a snapshot: `r.running` is True and `r.output` is the output so far; collect the final result on the `[bash-done]` notification or with `await r.handle`."
+            "`await bash(cmd)` waits at most `yield_after` seconds (`bash(cmd, yield_after=...)`, default 10, max 300; `None` uses the default, not an unbounded wait). If the command is still running, it returns a snapshot: `r.running` is True, `r.exit_code` is None, `r.output` is the output so far, and `r.handle` is the live handle. A completed result has `r.running` False and an integer `r.exit_code`. The command keeps running after a snapshot; end the turn and collect the final result on the `[bash-done]` notification."
                 .to_string(),
         );
     }

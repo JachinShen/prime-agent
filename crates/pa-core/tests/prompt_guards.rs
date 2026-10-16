@@ -549,8 +549,11 @@ fn bounded_await_contract_render_is_daemon_only() {
     };
     let daemon = system_prompt_breakdown(&options);
     assert!(
-        daemon.assembled.contains("yield_after") && daemon.assembled.contains("[bash-done]"),
-        "the daemon session prompt must carry the bounded-await contract"
+        daemon.assembled.contains("yield_after")
+            && daemon.assembled.contains("[bash-done]")
+            && daemon.assembled.contains("`r.running` is True")
+            && daemon.assembled.contains("`r.exit_code` is None"),
+        "the daemon session prompt must carry the bounded-await result contract"
     );
     options.daemonless = true;
     let daemonless = system_prompt_breakdown(&options);
