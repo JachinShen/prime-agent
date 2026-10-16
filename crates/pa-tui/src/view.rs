@@ -161,7 +161,7 @@ pub struct AgentView {
     /// The width the cached rows were laid out for.
     pub(crate) layout_width: usize,
     /// Rendering options that affect cached entry rows.
-    layout_options: Option<(Theme, String, bool, bool)>,
+    layout_options: Option<layout::LayoutOptions>,
     /// Row texts of the inline frame at the last main-screen flush: the
     /// next flush diffs against this, so exits never duplicate scrollback.
     flushed_frame: Vec<String>,
@@ -473,6 +473,46 @@ impl AgentView {
         self.push_entry(entry);
     }
 
+    pub fn prepend_entries(&mut self, entries: Vec<ChatEntry>) {
+        let count = entries.len();
+        if count == 0 {
+            return;
+        }
+        self.pending_handoff = None;
+        let seam_before = if self.layout_width > 0 && !self.chat.is_empty() {
+            self.count_entry_rows(0, self.layout_width)
+        } else {
+            0
+        };
+        self.reanchor_paused_window_for_prepend();
+        let cursor_spacing_before = self.prepend_cursor_spacing(0);
+        self.chat.splice(0..0, entries);
+        self.entry_layout
+            .splice(0..0, std::iter::repeat_n([None, None, None], count));
+        self.entry_heights
+            .splice(0..0, std::iter::repeat_n([None, None, None], count));
+        {
+            let mut caches = self.md_caches.borrow_mut();
+            let shifted: std::collections::HashMap<usize, crate::markdown::MarkdownBlockCache> =
+                caches
+                    .drain()
+                    .map(|(index, cache)| (index + count, cache))
+                    .collect();
+            *caches = shifted;
+        }
+        self.sparse_entries = self
+            .sparse_entries
+            .iter()
+            .map(|index| index + count)
+            .collect();
+        self.toggled_cards = self
+            .toggled_cards
+            .iter()
+            .map(|index| index + count)
+            .collect();
+        self.note_prepended_entries(count, seam_before, cursor_spacing_before);
+    }
+
     /// Drop the whole transcript and its cached layout (a fresh snapshot
     /// rebuild re-renders every row).
     pub fn clear_chat(&mut self) {
@@ -699,6 +739,8 @@ fn item_to_entry(item: TranscriptItem) -> ChatEntry {
     }
 }
 
+#[cfg(test)]
+mod prepend_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

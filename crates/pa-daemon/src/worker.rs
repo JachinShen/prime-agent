@@ -48,9 +48,9 @@ use turn::TurnRunner;
 mod commands;
 
 pub use env::{
-    WORKER_ACTIVE_SESSION_ID_ENV, WORKER_CWD_ENV, WORKER_INSTANCE_ID_ENV,
-    WORKER_RECOVERY_JOURNAL_ENV, WORKER_ROLE_ENV, WORKER_SCRIPT_ENV, WORKER_SOCKET_ENV,
-    WORKER_SUPERVISOR_LOST_EXIT_MS_ENV, WORKER_SUPERVISOR_SOCKET_ENV,
+    strip_inherited_worker_env, WORKER_ACTIVE_SESSION_ID_ENV, WORKER_CWD_ENV,
+    WORKER_INSTANCE_ID_ENV, WORKER_RECOVERY_JOURNAL_ENV, WORKER_ROLE_ENV, WORKER_SCRIPT_ENV,
+    WORKER_SOCKET_ENV, WORKER_SUPERVISOR_LOST_EXIT_MS_ENV, WORKER_SUPERVISOR_SOCKET_ENV,
     WORKER_TELEMETRY_DISABLED_ENV, WORKER_TOKEN_ENV,
 };
 use serde_json::Map;
@@ -128,6 +128,8 @@ pub struct Worker {
     /// The concrete agent engine behind `engine` for the create command's
     /// eager session build (the kernel prewarm).
     pub(crate) agent_engine: Option<std::sync::Arc<crate::agent_engine::AgentSessionEngine>>,
+    /// The worker's supervisor link (roster pushes, passivation asks, bounces).
+    pub(crate) roster_link: std::sync::Arc<crate::supervisor_link::SupervisorLink>,
     /// The monotonic roster-delta counter the roster pushes stamp and the
     /// authoritative pulls embed: a push can race a fresher pull, so the
     /// supervisor's gate drops the stale snapshot.
@@ -277,6 +279,7 @@ impl Worker {
     /// # Panics
     ///
     /// The wired closures panic on a poisoned session-core mutex.
+    #[must_use]
     pub fn new(config: WorkerConfig, registration: Option<RegistrationHandle>) -> Self {
         let events = Arc::new(EventPump::new());
         let supervisor_claims = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -341,11 +344,10 @@ impl Worker {
         let idle_notify = Arc::new(Notify::new());
         // The supervisor link and worker token for roster pushes: one
         // construction shared by the turn runner and the command arms
-        // (identical dial path).
+        // (identical dial path). The config field is the one supervisor-
+        // socket source.
         let roster_link = std::sync::Arc::new(crate::supervisor_link::SupervisorLink::new(
-            std::env::var_os(WORKER_SUPERVISOR_SOCKET_ENV)
-                .map(std::path::PathBuf::from)
-                .unwrap_or_default(),
+            config.supervisor_socket_path.clone(),
         ));
         let worker_token = std::env::var(WORKER_TOKEN_ENV).unwrap_or_default();
         let roster_delta_sequence = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -448,6 +450,8 @@ impl Worker {
                 // The in-run autonomous continuation seam: the hook holds
                 // itself weakly through the registered arc.
                 concrete.register_arc();
+                concrete
+                    .set_rlm_usage_store(std::sync::Arc::new(CoreUsageStore(Arc::clone(&core))));
                 let sink_core = Arc::clone(&core);
                 let sink_notify = Arc::clone(&work_notify);
                 let autonomous_sink: crate::agent_engine::AutonomousAdmission = {
@@ -753,6 +757,7 @@ impl Worker {
             core,
             engine,
             agent_engine,
+            roster_link: Arc::clone(&roster_link),
             roster_delta_sequence,
             work_notify,
             idle_notify,
@@ -948,6 +953,73 @@ fn emit_refinement_row(
         json!({ "type": "message_end", "message": message }),
     );
     true
+}
+
+struct CoreUsageStore(Arc<Mutex<SessionCore>>);
+
+fn missing_usage_target(target_id: &str) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!("Assistant message entry {target_id} not found"),
+    )
+}
+
+fn assistant_message(entry: &crate::session_store::SessionEntry) -> Option<&Value> {
+    if entry.type_ != "message" {
+        return None;
+    }
+    let message = entry.fields.get("message")?;
+    (crate::types::message_role(message) == Some("assistant")).then_some(message)
+}
+
+impl pa_core::session_engine::rlm_usage::RlmChildUsageStore for CoreUsageStore {
+    fn last_assistant(
+        &self,
+    ) -> pa_core::session_engine::rlm_usage::RlmChildUsageFuture<
+        '_,
+        Option<(String, pa_types::ai::Usage)>,
+    > {
+        let core = Arc::clone(&self.0);
+        Box::pin(async move {
+            let core = core.lock().unwrap();
+            let store = core.store.as_ref()?;
+            store.entries().iter().rev().find_map(|entry| {
+                let message = assistant_message(entry)?;
+                Some((
+                    entry.id.clone(),
+                    message
+                        .get("usage")
+                        .cloned()
+                        .and_then(|usage| serde_json::from_value(usage).ok())
+                        .unwrap_or_default(),
+                ))
+            })
+        })
+    }
+
+    fn append_attribution(
+        &self,
+        row_id: &str,
+        target_id: &str,
+        child_usage: pa_types::ai::Usage,
+        origin: Option<pa_types::session::ChildUsageOrigin>,
+    ) -> pa_core::session_engine::rlm_usage::RlmChildUsageFuture<
+        '_,
+        std::io::Result<pa_core::session_engine::rlm_usage::ChildUsageAppendResult>,
+    > {
+        let core = Arc::clone(&self.0);
+        let row_id = row_id.to_owned();
+        let target_id = target_id.to_owned();
+        Box::pin(async move {
+            let mut core = core.lock().unwrap();
+            let Some(store) = core.store.as_mut() else {
+                return Err(missing_usage_target(&target_id));
+            };
+            store
+                .append_child_usage_once(&row_id, &target_id, child_usage, origin)
+                .map_err(|error| std::io::Error::other(format!("{error:#}")))
+        })
+    }
 }
 
 /// Whether one queued item is a minted goal-context turn (TS's

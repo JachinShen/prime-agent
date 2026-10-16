@@ -162,6 +162,7 @@ pub(crate) async fn build_faux_engine_with(
             additional_prompt_paths: vec![],
             extra_builtin_skill_overrides: vec![],
             rlm_subagent_host,
+            rlm_usage_store: None,
             progress_note_emit: None,
             rlm_depth,
             daemonless: true,
@@ -171,6 +172,7 @@ pub(crate) async fn build_faux_engine_with(
             on_background_work_settled: None,
             queued_goal_context_purge: None,
             queued_steering_probe: None,
+            should_stop_after_turn: None,
             image_model_router: None,
         },
     )

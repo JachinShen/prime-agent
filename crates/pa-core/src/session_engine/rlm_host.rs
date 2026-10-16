@@ -146,7 +146,6 @@ pub struct RlmSpawnRequest {
     /// The parent's in-flight turn request the spawn anchors to (TS
     /// `spawnedByRequestId`): `None` for a spawn outside an active run.
     pub spawned_by_request_id: Option<String>,
-    pub cell_source_code: Option<String>,
 }
 
 /// Validated `rlm.create_session` request handed to the host.
@@ -611,7 +610,6 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
                     anyhow::bail!("rlm.spawn prompt must be a string");
                 };
                 let mut request = spawn_request_from_payload(prompt, data)?;
-                request.cell_source_code = payload.cell_source_code.clone();
                 // TS `_startRlmChildRun`: the spawning request is the turn
                 // whose tool call is executing now (the anchor is computed
                 // before the spawn admission's first await); a spawn
@@ -663,7 +661,6 @@ fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmS
         model,
         thinking,
         spawned_by_request_id: None,
-        cell_source_code: None,
     })
 }
 
@@ -1086,6 +1083,7 @@ mod tests {
             crate::session_engine::runtime_wiring::RlmWiring {
                 model_registry: Some(Arc::clone(&registry)),
                 subagent_host: host,
+                usage_store: None,
                 progress_note_emit: None,
             },
             None,
@@ -1094,10 +1092,7 @@ mod tests {
     }
 
     fn payload(data: Value) -> HostRequestPayload {
-        HostRequestPayload {
-            data,
-            cell_source_code: None,
-        }
+        HostRequestPayload { data }
     }
 
     async fn call(
@@ -1261,6 +1256,7 @@ mod tests {
             crate::session_engine::runtime_wiring::RlmWiring {
                 model_registry: None,
                 subagent_host: None,
+                usage_store: None,
                 progress_note_emit: Some(Arc::new(move |message, timestamp| {
                     sink.lock().unwrap().push((message.to_string(), timestamp));
                 })),
