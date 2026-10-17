@@ -27,6 +27,14 @@ fn text_of(line: &Line) -> String {
 }
 
 #[test]
+fn nix_cell_uses_nix_label() {
+    let mut card = cell_card("probeValue = 6 * 7", json!({"status": "ok"}), false, false);
+    card.name = "nix_repl".into();
+    let lines = render(&card, 0, Detail::Overview, &theme(), 100, true);
+    assert!(text_of(&lines[0]).contains("✓ nix · probeValue = 6 * 7"));
+}
+
+#[test]
 fn done_cell_summary_line() {
     let card = cell_card(
         "print('visual parity ok')",

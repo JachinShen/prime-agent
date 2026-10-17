@@ -192,7 +192,9 @@ fn collapsed_line(
     let dominant = dominant_bash(details, code);
     let preview = preview_ipython_code(code);
     let is_bash_cell = parse_ipython_bash_cell(code).is_some();
-    let language_label = if dominant.is_some() {
+    let language_label = if card.name == "nix_repl" {
+        "nix".to_string()
+    } else if dominant.is_some() {
         "bash".to_string()
     } else {
         match (is_bash_cell, &preview.language) {

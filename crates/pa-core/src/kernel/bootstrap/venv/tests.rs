@@ -200,17 +200,17 @@ fn probe_memo_misses_on_out_of_band_venv_mutation() {
 
     invalidate_runtime_probe_cache();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(probe_count(), 2, "cold call probes runtime and dill");
+    assert_eq!(probe_count(), 1, "cold call probes runtime");
 
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(probe_count(), 2, "unchanged venv hits the memo");
+    assert_eq!(probe_count(), 1, "unchanged venv hits the memo");
 
     std::fs::write(rlm.join("core.py"), "y = 2\n").unwrap();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        4,
-        "installed-rlm mutation probes runtime and dill instead of masking"
+        2,
+        "installed-rlm mutation probes runtime instead of masking"
     );
 
     std::fs::write(
@@ -223,42 +223,34 @@ fn probe_memo_misses_on_out_of_band_venv_mutation() {
     )
     .unwrap();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(
-        probe_count(),
-        6,
-        "interpreter replacement probes runtime and dill"
-    );
+    assert_eq!(probe_count(), 3, "interpreter replacement probes runtime");
 
     // Fingerprint-invisible damage (the fake's verdict file): the memo still hits — the masked
     // class, detected at kernel-START failure time.
     std::fs::write(&control, "broken\n").unwrap();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(probe_count(), 6, "invisible damage alone does not re-probe");
+    assert_eq!(probe_count(), 3, "invisible damage alone does not re-probe");
 
     invalidate_runtime_probe_cache();
     assert!(!kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(probe_count(), 7, "a failing probe is never memoized");
+    assert_eq!(probe_count(), 4, "a failing probe is never memoized");
 
     std::fs::remove_file(&control).unwrap();
     invalidate_runtime_probe_cache();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(probe_count(), 9, "invalidation probes runtime and dill");
+    assert_eq!(probe_count(), 5, "invalidation probes runtime");
 
     // An uninstalled runtime re-probes rather than masks: the installed-rlm
     // witness disappears (the real probe fails; this fake one passes).
     std::fs::remove_dir_all(&rlm).unwrap();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(
-        probe_count(),
-        11,
-        "an uninstalled rlm probes runtime and dill"
-    );
+    assert_eq!(probe_count(), 6, "an uninstalled rlm probes runtime");
 
     std::fs::remove_file(&python).unwrap();
     assert!(!kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        11,
+        6,
         "a deleted interpreter misses on stat without running"
     );
 }
@@ -299,14 +291,14 @@ fn disk_memo_hits_across_a_fresh_process_with_zero_probes() {
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        2,
-        "the cold call probes runtime and dill and publishes the disk memo"
+        1,
+        "the cold call probes runtime and publishes the disk memo"
     );
     clear_in_process_probe_memo_for_tests();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        2,
+        1,
         "a fresh process hits the disk memo with zero interpreter invocations"
     );
     invalidate_runtime_probe_cache();
@@ -317,7 +309,7 @@ fn disk_memo_hits_across_a_fresh_process_with_zero_probes() {
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        4,
+        2,
         "the next start after invalidation re-probes"
     );
 }
@@ -356,14 +348,14 @@ fn disk_memo_damage_across_processes_misses_and_reprobes() {
 
     invalidate_runtime_probe_cache();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(probe_count(), 2);
+    assert_eq!(probe_count(), 1);
 
     clear_in_process_probe_memo_for_tests();
     std::fs::write(rlm.join("core.py"), "y = 2\n").unwrap();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        4,
+        2,
         "process B re-probes after the out-of-band rlm mutation"
     );
 
@@ -374,7 +366,7 @@ fn disk_memo_damage_across_processes_misses_and_reprobes() {
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        6,
+        3,
         "process B re-probes after the rlm uninstall"
     );
 
@@ -386,7 +378,7 @@ fn disk_memo_damage_across_processes_misses_and_reprobes() {
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        6,
+        3,
         "a repair to the already-published content hits the disk memo without re-probing"
     );
 
@@ -397,7 +389,7 @@ fn disk_memo_damage_across_processes_misses_and_reprobes() {
     assert!(!kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        6,
+        3,
         "a version-file rewrite fails the cheap check before any probe"
     );
 
@@ -405,7 +397,7 @@ fn disk_memo_damage_across_processes_misses_and_reprobes() {
     assert!(!kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        6,
+        3,
         "a deleted interpreter misses without running"
     );
 }
@@ -449,7 +441,7 @@ fn disk_memo_masked_class_hits_across_processes_until_invalidation() {
 
     invalidate_runtime_probe_cache();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(probe_count(), 2);
+    assert_eq!(probe_count(), 1);
 
     // Fingerprint-invisible damage: the verdict file stands in for
     // interpreter-internal breakage the witnesses cannot see.
@@ -458,7 +450,7 @@ fn disk_memo_masked_class_hits_across_processes_until_invalidation() {
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        2,
+        1,
         "the disk hit masks the invisible damage — the widened window"
     );
 
@@ -470,15 +462,15 @@ fn disk_memo_masked_class_hits_across_processes_until_invalidation() {
     assert!(!kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        3,
-        "the retry re-probes (runtime fails, dill short-circuits) and detects"
+        2,
+        "the retry re-probes (runtime fails) and detects"
     );
 
     // Healing republishes through a real probe, never a stale memo.
     std::fs::remove_file(&control).unwrap();
     clear_in_process_probe_memo_for_tests();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(probe_count(), 5);
+    assert_eq!(probe_count(), 3);
 }
 
 /// The write-vs-invalidate race: a late atomic write landing after an invalidation resurrects a
@@ -516,7 +508,7 @@ fn disk_memo_late_write_after_invalidate_is_benign() {
 
     invalidate_runtime_probe_cache();
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
-    assert_eq!(probe_count(), 2);
+    assert_eq!(probe_count(), 1);
 
     // The failed start invalidates both layers...
     invalidate_runtime_probe_cache();
@@ -535,7 +527,7 @@ fn disk_memo_late_write_after_invalidate_is_benign() {
     assert!(kernel_ready(&python_str, &venv, "sha256:runtime", &[]));
     assert_eq!(
         probe_count(),
-        2,
+        1,
         "the late write's key-valid entry serves the retry without a probe"
     );
     invalidate_runtime_probe_cache();
@@ -647,18 +639,13 @@ fn live_probe_memo_reprobes_when_installed_rlm_is_removed() {
     let fake = dir.path().join("venv");
     let site = fake.join("lib/python3.11/site-packages");
     let rlm = site.join("rlm");
-    let dill = site.join("dill");
-    let real_dill = installed_package_dir(&real_venv, "dill")
-        .expect("installed dill is required for the live runtime probe");
-    for (source, target_dir) in [(&real_rlm, &rlm), (&real_dill, &dill)] {
-        std::fs::create_dir_all(target_dir).unwrap();
-        let mut files = Vec::new();
-        collect_python_files(source, &mut files).unwrap();
-        for file in &files {
-            let target = target_dir.join(file.strip_prefix(source).unwrap());
-            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-            std::fs::copy(file, &target).unwrap();
-        }
+    std::fs::create_dir_all(&rlm).unwrap();
+    let mut files = Vec::new();
+    collect_python_files(&real_rlm, &mut files).unwrap();
+    for file in &files {
+        let target = rlm.join(file.strip_prefix(&real_rlm).unwrap());
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::copy(file, &target).unwrap();
     }
 
     let counter = dir.path().join("count");
@@ -695,7 +682,7 @@ fn live_probe_memo_reprobes_when_installed_rlm_is_removed() {
         &identity,
         &[]
     ));
-    assert_eq!(probe_count(), 2, "cold call probes runtime and dill");
+    assert_eq!(probe_count(), 1, "cold call probes runtime");
 
     assert!(kernel_ready(
         &python.to_string_lossy(),
@@ -703,7 +690,7 @@ fn live_probe_memo_reprobes_when_installed_rlm_is_removed() {
         &identity,
         &[]
     ));
-    assert_eq!(probe_count(), 2, "unchanged venv hits the memo");
+    assert_eq!(probe_count(), 1, "unchanged venv hits the memo");
 
     std::fs::remove_dir_all(&rlm).unwrap();
     assert!(
@@ -712,8 +699,8 @@ fn live_probe_memo_reprobes_when_installed_rlm_is_removed() {
     );
     assert_eq!(
         probe_count(),
-        3,
-        "the out-of-band rlm uninstall re-probed the runtime (the dill probe short-circuits)"
+        2,
+        "the out-of-band rlm uninstall re-probed the runtime"
     );
 
     let mut files = Vec::new();
@@ -732,42 +719,10 @@ fn live_probe_memo_reprobes_when_installed_rlm_is_removed() {
     ));
     assert_eq!(
         probe_count(),
-        5,
-        "the restored runtime re-probed runtime and dill after invalidation"
+        3,
+        "the restored runtime re-probed runtime after invalidation"
     );
 
-    std::fs::remove_dir_all(&dill).unwrap();
-    assert!(
-        !kernel_ready(&python.to_string_lossy(), &fake, &identity, &[]),
-        "a removed dill import must not be hidden by the memo"
-    );
-    assert_eq!(
-        probe_count(),
-        7,
-        "the removed dill re-probed runtime and dill"
-    );
-
-    // EXTENDED SEQUENCE: restore dill, re-probe through a real verdict, then simulate a fresh
-    // process and pin that the disk hit runs ZERO real interpreter probes.
-    let mut files = Vec::new();
-    collect_python_files(&real_dill, &mut files).unwrap();
-    for file in &files {
-        let target = dill.join(file.strip_prefix(&real_dill).unwrap());
-        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-        std::fs::copy(file, &target).unwrap();
-    }
-    invalidate_runtime_probe_cache();
-    assert!(kernel_ready(
-        &python.to_string_lossy(),
-        &fake,
-        &identity,
-        &[]
-    ));
-    assert_eq!(
-        probe_count(),
-        9,
-        "the restored dill re-probes runtime and dill after invalidation"
-    );
     clear_in_process_probe_memo_for_tests();
     assert!(kernel_ready(
         &python.to_string_lossy(),
@@ -777,7 +732,7 @@ fn live_probe_memo_reprobes_when_installed_rlm_is_removed() {
     ));
     assert_eq!(
         probe_count(),
-        9,
+        3,
         "a fresh process hits the disk memo with ZERO real interpreter invocations"
     );
 }

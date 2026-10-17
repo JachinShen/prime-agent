@@ -3,7 +3,6 @@
 
 use super::{
     collect_python_files, Digest, HashMap, KernelPythonSkill, Mutex, Path, PathBuf, Stdio,
-    DEFAULT_RLM_EXTRA_PACKAGES,
 };
 
 fn python_imports(python: &str, module_name: &str) -> bool {
@@ -25,22 +24,12 @@ fn run_quiet(command: &str, args: &[&str]) -> bool {
     matches!(child.status(), Ok(status) if status.success())
 }
 
-/// The runtime-ready assertion from the TS product: a current
-/// prime-agent-runtime with the callable RLM surface, harness CRUD, bash
-/// handles, and protocol version 3.
+/// The Nix adapter transport entry point and wire protocol must be available.
 const RUNTIME_READY_CHECK: &str =
     "import rlm.nix_repl as repl; assert callable(repl.main); assert repl.PROTOCOL_VERSION == 3";
 
 pub(crate) fn has_prime_agent_runtime(python: &str) -> bool {
     run_quiet(python, &["-c", RUNTIME_READY_CHECK])
-}
-
-pub(crate) fn missing_rlm_extra_import_labels(python: &str) -> Vec<&'static str> {
-    DEFAULT_RLM_EXTRA_PACKAGES
-        .iter()
-        .filter(|(_, import, _)| !python_imports(python, import))
-        .map(|(_, _, label)| *label)
-        .collect()
 }
 
 pub(crate) fn missing_python_skill_import_labels(
@@ -81,14 +70,12 @@ pub(super) fn installed_runtime_identity(python: &Path, venv: &Path) -> String {
         }
         Err(error) => hasher.update(format!("py-error:{}:{error}", python.display()).as_bytes()),
     }
-    for package in ["rlm", "dill"] {
-        match installed_package_dir(venv, package) {
-            Some(dir) => match hash_python_tree(&dir) {
-                Ok(hash) => hasher.update(format!("{package}:{hash}").as_bytes()),
-                Err(error) => hasher.update(format!("{package}-error:{error}").as_bytes()),
-            },
-            None => hasher.update(format!("{package}-missing").as_bytes()),
-        }
+    match installed_package_dir(venv, "rlm") {
+        Some(dir) => match hash_python_tree(&dir) {
+            Ok(hash) => hasher.update(format!("rlm:{hash}").as_bytes()),
+            Err(error) => hasher.update(format!("rlm-error:{error}").as_bytes()),
+        },
+        None => hasher.update(b"rlm-missing"),
     }
     format!("sha256:{:x}", hasher.finalize())
 }
@@ -155,8 +142,8 @@ pub(super) fn runtime_probe_key(
 
 /// The runtime-ready check, memoized on success across two layers: the process-global map first,
 /// then the on-disk cross-process memo. `version_raw` is the raw `.bootstrap-version` text the
-/// caller already read. The key is recomputed fresh on every call so a hit skips only the two
-/// interpreter probes. A caller-owned `PRIME_AGENT_KERNEL_PYTHON` override never reaches this.
+/// caller already read. The key is recomputed fresh on every call so a hit skips only the
+/// interpreter probe. A caller-owned `PRIME_AGENT_KERNEL_PYTHON` override never reaches this.
 pub(super) fn has_prime_agent_runtime_memoized(
     python: &str,
     runtime_identity: &str,
@@ -181,7 +168,7 @@ pub(super) fn has_prime_agent_runtime_memoized(
         entries.insert(key, memo_path);
         return true;
     }
-    if !has_prime_agent_runtime(python) || !python_imports(python, "dill") {
+    if !has_prime_agent_runtime(python) {
         return false;
     }
     let mut memo = lock_probe_memo();

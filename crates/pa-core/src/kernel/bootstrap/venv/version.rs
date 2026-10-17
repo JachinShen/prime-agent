@@ -4,7 +4,7 @@ use super::{default_rlm_extra_uv_args, BootstrapPythonSkill, BootstrapVersion, P
 
 /// Schema of `.bootstrap-version`; a mismatch rebuilds the venv.
 pub(super) const BOOTSTRAP_SCHEMA: u64 = 9;
-pub(super) const STATE_SNAPSHOT_REQUIREMENT: &str = "dill";
+
 const BOOTSTRAP_VERSION_FILE: &str = ".bootstrap-version";
 pub(super) fn read_bootstrap_version(venv: &Path) -> Option<BootstrapVersion> {
     let raw = std::fs::read_to_string(venv.join(BOOTSTRAP_VERSION_FILE)).ok()?;
@@ -54,7 +54,6 @@ pub(super) fn bootstrap_base_version_current(
         Some(version) => {
             version.schema == BOOTSTRAP_SCHEMA
                 && version.runtime.as_deref() == Some(runtime_identity)
-                && version.snapshot.as_deref() == Some(STATE_SNAPSHOT_REQUIREMENT)
                 && extra_uv_args_match(
                     version.extra_uv_args.as_deref(),
                     &default_rlm_extra_uv_args(),
@@ -83,7 +82,7 @@ pub(crate) fn write_bootstrap_version(
     let version = BootstrapVersion {
         schema: BOOTSTRAP_SCHEMA,
         runtime: Some(runtime_identity.to_string()),
-        snapshot: Some(STATE_SNAPSHOT_REQUIREMENT.to_string()),
+        snapshot: None,
         extra_uv_args: Some(
             default_rlm_extra_uv_args()
                 .into_iter()

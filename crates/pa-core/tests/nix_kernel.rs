@@ -11,7 +11,7 @@ use pa_core::kernel::shared::{
 #[tokio::test]
 #[ignore = "requires Nix and the local runtime Python environment"]
 async fn nix_bindings_survive_calls_and_errors() {
-    let python = std::env::var_os("PRIME_AGENT_KERNEL_PYTHON")
+    let _python = std::env::var_os("PRIME_AGENT_KERNEL_PYTHON")
         .expect("set PRIME_AGENT_KERNEL_PYTHON to prime-agent-runtime/.venv/bin/python");
     let mut handlers = pa_core::kernel::shared::HostRequestHandlers::new();
     handlers.register(
@@ -22,7 +22,8 @@ async fn nix_bindings_survive_calls_and_errors() {
     );
     let manager = ReplKernelManager::new(KernelManagerOptions {
         host_handlers: handlers,
-        python: Some(python.into()),
+        // Resolve through the same bootstrap readiness path as a real session.
+        python: None,
         ..Default::default()
     });
     manager

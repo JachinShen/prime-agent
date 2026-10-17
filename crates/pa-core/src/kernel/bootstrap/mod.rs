@@ -1,5 +1,5 @@
 //! Kernel Python environment bootstrap: the public entry point [`ensure_kernel_python`]
-//! resolves (and on first run builds) the venv that runs `python -m rlm.repl`,
+//! resolves (and on first run builds) the venv that runs `python -m rlm.nix_repl`,
 //! deduplicating concurrent bootstraps; the venv and version-file machinery lives in
 //! [`venv`], the runtime bootstrap code in [`runtime_code`].
 
@@ -21,8 +21,8 @@ pub use runtime_code::{
 };
 use venv::{
     bootstrap_venv, ensure_uv, expand_home, has_prime_agent_runtime,
-    missing_python_skill_import_labels, missing_rlm_extra_import_labels, normalize_python_skills,
-    resolve_writable_kernel_venv_dir, sync_python_skills, BootstrapPythonSkill,
+    missing_python_skill_import_labels, normalize_python_skills, resolve_writable_kernel_venv_dir,
+    sync_python_skills, BootstrapPythonSkill,
 };
 pub use venv::{invalidate_runtime_probe_cache, kernel_venv_dir, kernel_venv_python};
 use venv::{kernel_base_ready, kernel_ready};
@@ -36,23 +36,8 @@ pub struct KernelPythonSkill {
     pub pyproject_path: PathBuf,
 }
 
-/// The default extra packages pre-installed in the kernel venv and promised to
-/// the model in the system prompt.
-pub const DEFAULT_RLM_EXTRA_PACKAGES: [(&str, &str, &str); 12] = [
-    // (uvArg, importName, promptLabel)
-    ("requests", "requests", "requests"),
-    ("httpx", "httpx", "httpx"),
-    ("pyyaml", "yaml", "yaml (PyYAML)"),
-    ("tomli", "tomli", "tomli"),
-    ("python-dotenv", "dotenv", "dotenv (python-dotenv)"),
-    ("pandas", "pandas", "pandas"),
-    ("numpy", "numpy", "numpy"),
-    ("scipy", "scipy", "scipy"),
-    ("beautifulsoup4", "bs4", "bs4 (Beautiful Soup)"),
-    ("lxml", "lxml", "lxml"),
-    ("pydantic", "pydantic", "pydantic"),
-    ("tyro", "tyro", "tyro"),
-];
+/// The Nix adapter uses only the Python standard library; user code runs in Nix.
+pub const DEFAULT_RLM_EXTRA_PACKAGES: [(&str, &str, &str); 0] = [];
 
 #[must_use]
 pub fn default_rlm_extra_uv_args() -> Vec<&'static str> {
@@ -99,9 +84,9 @@ impl EnsureKernelPythonOptions {
 fn format_bootstrap_failure(error: &anyhow::Error) -> anyhow::Error {
     let mut message = format!(
         "Failed to set up the Python kernel runtime. {error:#}\n\
-         First-time setup needs the bundled local runtime and internet to install uv, Python, and default Python packages; once set up, Prime Agent runs offline. \
+         First-time setup needs the bundled local runtime and internet to install uv, Python, and the runtime; once set up, Prime Agent runs offline. \
          An interrupted runtime upgrade needs network once more, so re-run this while online. \
-         Set PRIME_AGENT_KERNEL_PYTHON to a Python with a current prime-agent-runtime and default Python packages installed to skip auto-bootstrap."
+         Set PRIME_AGENT_KERNEL_PYTHON to a Python with a current prime-agent-runtime Nix adapter installed to skip auto-bootstrap."
     );
     // The packaged exe-adjacent sidecar is the kernel runtime source; when it is missing everywhere
     // (packaged layout and source checkout), name it.
@@ -184,17 +169,8 @@ async fn ensure_kernel_python_uncached(
             let mut missing = Vec::new();
             if !has_prime_agent_runtime(&python_str) {
                 missing.push(
-                    "a current prime-agent-runtime with callable rlm.spawn, rlm.create_session, rlm.host_request, rlm.progress_note, rlm.rename, and explicit harness CRUD methods".to_string(),
+                    "a current prime-agent-runtime with callable rlm.nix_repl.main and protocol version 3".to_string(),
                 );
-            }
-            if missing.is_empty() {
-                let missing_extras = missing_rlm_extra_import_labels(&python_str);
-                if !missing_extras.is_empty() {
-                    missing.push(format!(
-                        "default Python packages ({})",
-                        missing_extras.join(", ")
-                    ));
-                }
             }
             if missing.is_empty() && !options.python_skills.is_empty() {
                 let missing_skills =

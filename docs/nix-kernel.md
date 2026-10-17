@@ -31,7 +31,9 @@ export PRIME_AGENT_KERNEL_PYTHON="$PWD/prime-agent-runtime/.venv/bin/python"
 ```
 
 The Python override selects this checkout's adapter instead of an installed
-upstream runtime. Start a fresh session; do not reuse a running upstream daemon
+upstream runtime. The adapter does not require the old scientific Python
+packages (numpy, pandas, scipy, etc.) or dill. Startup checks the Nix adapter
+entry point and protocol, not those legacy dependencies. Start a fresh session; do not reuse a running upstream daemon
 or assume that old Python cells/checkpoints can resume as Nix.
 
 ## Example cells

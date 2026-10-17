@@ -10,10 +10,7 @@ use std::sync::Mutex;
 use anyhow::{anyhow, Context};
 use sha2::Digest;
 
-use super::{
-    default_rlm_extra_uv_args, EnsureKernelPythonOptions, KernelPythonSkill,
-    DEFAULT_RLM_EXTRA_PACKAGES,
-};
+use super::{default_rlm_extra_uv_args, EnsureKernelPythonOptions, KernelPythonSkill};
 
 // The concern children (the flows + the shared record stay in the
 // composition root).
@@ -33,10 +30,8 @@ use probe::{installed_rlm_dir, lock_probe_memo, runtime_probe_key};
 // The memo-clear helper and the live-probe package-dir walk exist only behind
 // the unix tests (see their gates in probe.rs and tests.rs).
 #[cfg(all(test, unix))]
-use probe::{clear_in_process_probe_memo_for_tests, installed_package_dir};
-pub(crate) use probe::{
-    has_prime_agent_runtime, missing_python_skill_import_labels, missing_rlm_extra_import_labels,
-};
+use probe::clear_in_process_probe_memo_for_tests;
+pub(crate) use probe::{has_prime_agent_runtime, missing_python_skill_import_labels};
 use probe::{has_prime_agent_runtime_memoized, installed_runtime_identity};
 use runtime_source::collect_python_files;
 pub(super) use runtime_source::{hash_runtime_source, require_runtime_source_dir};
@@ -52,7 +47,6 @@ use uv::windows_executable_candidates;
 use version::{
     bootstrap_base_version_current, bootstrap_skill_key, bootstrap_version_current,
     read_bootstrap_version, read_bootstrap_version_raw, write_bootstrap_version,
-    STATE_SNAPSHOT_REQUIREMENT,
 };
 #[cfg(test)]
 use version::{recorded_skills_cover, BOOTSTRAP_SCHEMA};
@@ -126,7 +120,6 @@ pub(crate) async fn bootstrap_venv(
         python_str,
         source_dir.to_string_lossy().to_string(),
     ];
-    install_args.push(STATE_SNAPSHOT_REQUIREMENT.to_string());
     for uv_arg in default_rlm_extra_uv_args() {
         install_args.push(uv_arg.to_string());
     }
