@@ -141,7 +141,7 @@ class Runtime:
         if code.startswith(":"):
             command, _, expr = code.partition(" ")
             if command not in {":b", ":p", ":t", ":doc", ":?", ":help"}:
-                raise ValueError(f"Unsupported REPL command {command}; interactive shells/editors and scope-loading commands are disabled. Use the bash tool for nix develop/nix shell.")
+                raise ValueError(f"Unsupported REPL command {command}; interactive shells/editors and scope-loading commands are disabled. Use :host tool.bash for nix develop/nix shell.")
             if "\n" in code:
                 raise ValueError("REPL commands must occupy one line")
             if expr:

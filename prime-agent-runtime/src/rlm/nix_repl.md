@@ -11,8 +11,8 @@ It uses protocol version 3 from `repl.md`, with these intentional differences:
   parser normalizes them before submission, preventing incomplete input from
   consuming later cells. Relative paths resolve from the runtime working directory.
 - Commands: `:b`, `:p`, `:t`, `:doc`, `:?`, `:help`. Other commands, including
-  `:sh`, editors, scope loaders and quit, fail clearly. Use the standalone bash
-  tool for `nix shell` / `nix develop`. Load a flake with
+  `:sh`, editors, scope loaders and quit, fail clearly. Use `:host { type = "tool.bash"; command = "..."; }`
+  for `nix shell` / `nix develop`. Load a flake with
   `flake = builtins.getFlake (toString ./.)`.
 - `:host { type = "rlm.list_subagents"; }` evaluates the attribute set with
   `builtins.toJSON` in the live REPL and sends a normal `host_request`. The host

@@ -8,7 +8,7 @@ use pa_agent::scripted::ScriptedProvider;
 
 fn echo_definition() -> ToolDefinition {
     ToolDefinition {
-        name: "echo".to_string(),
+        name: "nix_repl".to_string(),
         label: "Echo".to_string(),
         description: "Echoes its input".to_string(),
         prompt_snippet: String::new(),
@@ -47,7 +47,7 @@ async fn engine_runs_tool_loop_and_persists() {
     let provider = Arc::new(ScriptedProvider::new(model.clone()));
     provider.push_tool_call_turn(
         Some("checking"),
-        vec![("call-1", "echo", serde_json::json!({ "text": "hi" }))],
+        vec![("call-1", "nix_repl", serde_json::json!({ "text": "hi" }))],
     );
     provider.push_text_turn("all done");
 
@@ -111,7 +111,9 @@ async fn engine_runs_tool_loop_and_persists() {
     let state = engine.session.agent().state().await;
     assert!(state.messages.iter().any(|message| match message {
         pa_agent::types::AgentMessage::Standard(pa_agent::types::Message::ToolResult(result)) => {
-            result.tool_name == "echo"
+            result.tool_name == "nix_repl"
+                && !result.is_error
+                && result.content == vec![pa_agent::types::ToolResultContent::text("echo: hi")]
         }
         _ => false,
     }));
@@ -363,7 +365,9 @@ async fn create_session_registers_goal_and_heartbeat_handlers() {
         agent_dir: dir.path().to_path_buf(),
         model: Some(agent_model),
         stream_fn: Some(stream_fn),
-        tools: Vec::new(),
+        tools: vec![super::super::tool_bridge::bridge_tool(
+            crate::create_bash_tool_definition(&dir.path().to_string_lossy()),
+        )],
         ..Default::default()
     })
     .await
@@ -377,10 +381,7 @@ async fn create_session_registers_goal_and_heartbeat_handlers() {
         .iter()
         .map(|tool| tool.name().to_string())
         .collect();
-    assert!(
-        names.iter().any(|name| name == "nix_repl"),
-        "tools: {names:?}"
-    );
+    assert_eq!(names, vec!["nix_repl"]);
 }
 
 /// A daemon-shaped resume: an in-memory session manager (the daemon's

@@ -343,14 +343,14 @@ pub fn ipython_tool_schema() -> serde_json::Value {
         "properties": {
             "code": {
                 "type": "string",
-                "description": "Nix expressions, bindings, or supported REPL commands. Use bash for shell commands and edit for file changes."
+                "description": "Nix expressions, bindings, or supported REPL commands. Use :host with type = \"tool.bash\" for shell commands or type = \"tool.edit\" for file changes."
             }
         }
     })
 }
 
 pub fn ipython_tool_description() -> &'static str {
-    "Evaluate Nix expressions and bindings in a persistent real nix repl. Bindings survive calls; directly assigned literal values are restored best-effort on resume. Python and top-level await are not supported. Use standalone bash and edit tools for side effects. Host APIs use :host followed by a Nix attribute set."
+    "Evaluate Nix expressions and bindings in a persistent real nix repl. Bindings survive calls; directly assigned literal values are restored best-effort on resume. Python and top-level await are not supported. Use :host { type = \"tool.bash\"; command = \"...\"; } for shell commands and :host { type = \"tool.edit\"; path = \"...\"; edits = [ { oldText = \"...\"; newText = \"...\"; } ]; } for exact file edits. Host APIs use :host followed by a Nix attribute set."
 }
 
 #[tracing::instrument(

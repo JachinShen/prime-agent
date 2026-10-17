@@ -461,6 +461,21 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .await
         .map_err(|join| anyhow::anyhow!("websearch key resolve join failed: {join}"))?
     };
+    for definition in [
+        crate::create_bash_tool_definition_with_options(
+            &cwd.to_string_lossy(),
+            &crate::BashToolOptions {
+                shell_path: kernel_shell_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string()),
+                command_prefix: kernel_command_prefix.clone(),
+                ..Default::default()
+            },
+        ),
+        crate::create_edit_tool_definition(&cwd.to_string_lossy()),
+    ] {
+        super::tool_bridge::register_host_tool(&mut handlers, definition);
+    }
     let provisioner = super::runtime_wiring::kernel_provisioner(
         session_id,
         handlers,
@@ -476,7 +491,12 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         on_unavailable_skills,
         on_bootstrap_result,
     );
-    let mut tools = config.tools.clone();
+    let mut tools: Vec<_> = config
+        .tools
+        .iter()
+        .filter(|tool| tool.name() == PYTHON_TOOL_NAME)
+        .cloned()
+        .collect();
     if !tools.iter().any(|tool| tool.name() == PYTHON_TOOL_NAME) {
         let definition = crate::tools::ipython::create_ipython_tool_definition(
             &cwd.to_string_lossy(),
@@ -488,23 +508,6 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         tools.push(Arc::new(
             crate::session_engine::tool_bridge::ToolDefinitionBridge::new(definition),
         ));
-    }
-    for definition in [
-        crate::create_bash_tool_definition_with_options(
-            &cwd.to_string_lossy(),
-            &crate::BashToolOptions {
-                shell_path: kernel_shell_path.map(|path| path.to_string_lossy().to_string()),
-                command_prefix: kernel_command_prefix,
-                ..Default::default()
-            },
-        ),
-        crate::create_edit_tool_definition(&cwd.to_string_lossy()),
-    ] {
-        if !tools.iter().any(|tool| tool.name() == definition.name) {
-            tools.push(Arc::new(
-                crate::session_engine::tool_bridge::ToolDefinitionBridge::new(definition),
-            ));
-        }
     }
     let active_tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_string()).collect();
 

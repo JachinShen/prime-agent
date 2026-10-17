@@ -116,7 +116,7 @@ fn assemble_breakdown(
                 .map(|file| (file.path.display().to_string(), file.content.clone()))
                 .collect(),
             skills: resources.skills.clone(),
-            selected_tools: Some(vec![pa_types::ai::PYTHON_TOOL_NAME, "bash", "edit"]),
+            selected_tools: Some(vec![pa_types::ai::PYTHON_TOOL_NAME]),
             allow_recursion: Some(true),
             generic_mcp_servers: generic_servers,
             rlm_depth: Some(0),

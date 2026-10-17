@@ -7,8 +7,10 @@ JSON-lines transport adapter (`rlm.nix_repl`); model cells are not Python code.
 ## Scope
 
 The model uses `nix_repl` to evaluate Nix expressions and keep bindings between
-calls. Standalone `bash` and `edit` tools remain available. Use `bash` with
-`nix shell ... -c ...` or `nix develop ... -c ...` to run other languages and
+calls. It is the only model-facing tool. Shell commands and file edits use
+`:host { type = "tool.bash"; command = "..."; }` and
+`:host { type = "tool.edit"; path = "..."; edits = [ { oldText = "..."; newText = "..."; } ]; }`.
+Use shell commands such as `nix shell ... -c ...` or `nix develop ... -c ...` to run other languages and
 programs. A derivation build is not a general-purpose side-effect runner:
 substitution/caching can skip its commands and builds normally run sandboxed.
 
@@ -92,7 +94,7 @@ This deliberately avoids silently replaying builds or host-side effects.
 ## Safety and reproducibility
 
 The REPL runs with the agent user's permissions. It is not a security sandbox.
-Nix build sandboxing does not isolate standalone shell tools, file access, or
+Nix build sandboxing does not isolate host shell execution, file access, or
 host requests. Review commands before deploying or activating a configuration.
 
 Pin flake inputs and keep source revisions when reproducibility matters. A live
@@ -127,11 +129,15 @@ nix shell nixpkgs#gcc nixpkgs#pkg-config -c \
 
 ## Current limitations
 
+- Interrupting a `:host` cell stops waiting for its reply but does not cancel an
+  already running host shell command or undo an edit. Use the native shell
+  `timeout` parameter when needed; do not assume Ctrl-C killed the command.
+
 - Linux/macOS-style process groups are required; Windows is not supported by
   this experimental adapter.
 - Each cell contains one expression, binding, or supported REPL command.
 - REPL/build output is buffered until completion and capped at 1,048,576
-  characters; use the standalone shell tool when streaming output is needed.
+  characters. Host shell execution returns its tool result through `lastHostReply`.
 - Scope-loading commands (`:lf`, `:l`, `:a`) and interactive shells/editors are
   not exposed. Bind `builtins.getFlake` or `import` results explicitly instead.
 - Python skills and kernel-side MCP clients are unavailable.
@@ -142,7 +148,10 @@ nix shell nixpkgs#gcc nixpkgs#pkg-config -c \
 
 ## Changed interfaces
 
-The model tool name changes from `python_repl` to `nix_repl`. The runtime entry
+The model tool name changes from `python_repl` to `nix_repl`. It is the only
+exposed model tool; `tool.bash` and `tool.edit` are host request types, not
+additional model tools. Their replies expose `content`, `details`, and `isError`
+under `lastHostReply.result`. The runtime entry
 point changes from `rlm.repl` to `rlm.nix_repl`. Snapshot files are now
 `nix-kernel-state.json` and `nix-kernel-state-manifest.json`, separate from old
 Python/dill state. Wire protocol version remains 3. Existing Rust identifiers

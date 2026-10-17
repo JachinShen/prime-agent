@@ -126,6 +126,35 @@ impl AgentTool for ToolDefinitionBridge {
     }
 }
 
+/// Register a native tool behind the Nix host bridge, without exposing its schema.
+pub(crate) fn register_host_tool(
+    handlers: &mut crate::kernel::shared::HostRequestHandlers,
+    definition: ToolDefinition,
+) {
+    let request_type = format!("tool.{}", definition.name);
+    handlers.register(
+        request_type,
+        crate::kernel::shared::host_handler(move |payload| {
+            let definition = definition.clone();
+            async move {
+                let mut params = payload.data;
+                if let Some(object) = params.as_object_mut() {
+                    object.remove("type");
+                }
+                if let Some(prepare) = definition.prepare_arguments {
+                    params = prepare(params);
+                }
+                let result = (definition.execute)(&definition.name, params, None, None).await?;
+                Ok(serde_json::json!({
+                    "content": result.content,
+                    "details": result.details,
+                    "isError": result.is_error,
+                }))
+            }
+        }),
+    );
+}
+
 /// Wrap a definition in the loop's tool trait.
 #[must_use]
 pub fn bridge_tool(definition: ToolDefinition) -> Arc<dyn AgentTool> {
@@ -135,6 +164,79 @@ pub fn bridge_tool(definition: ToolDefinition) -> Arc<dyn AgentTool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn host_tools_use_native_bash_and_edit_in_the_session_directory() {
+        use crate::kernel::shared::{HostRequestHandlers, HostRequestPayload};
+
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_string_lossy();
+        let mut handlers = HostRequestHandlers::new();
+        register_host_tool(
+            &mut handlers,
+            crate::create_bash_tool_definition_with_options(
+                &cwd,
+                &crate::BashToolOptions {
+                    command_prefix: Some("export BRIDGE_VALUE=before".to_string()),
+                    ..Default::default()
+                },
+            ),
+        );
+        register_host_tool(&mut handlers, crate::create_edit_tool_definition(&cwd));
+        let bash = handlers.get("tool.bash").unwrap();
+        let output = bash(HostRequestPayload {
+            data: serde_json::json!({
+                "type": "tool.bash",
+                "command": "printf '%s' \"$BRIDGE_VALUE\" > example.txt; cat example.txt",
+            }),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            output,
+            serde_json::json!({
+                "content": [{"type": "text", "text": "before"}],
+                "details": null,
+                "isError": false,
+            })
+        );
+        let edit = handlers.get("tool.edit").unwrap();
+        let output = edit(HostRequestPayload {
+            data: serde_json::json!({
+                "type": "tool.edit",
+                "path": "example.txt",
+                "edits": [{"oldText": "before", "newText": "after"}],
+            }),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("example.txt")).unwrap(),
+            "after"
+        );
+        assert_eq!(output["isError"], false);
+        assert!(!output["details"]["diff"].as_str().unwrap().is_empty());
+        let error = bash(HostRequestPayload {
+            data: serde_json::json!({"type": "tool.bash", "command": "exit 7"}),
+        })
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("7"));
+        let error = edit(HostRequestPayload {
+            data: serde_json::json!({
+                "type": "tool.edit",
+                "path": "example.txt",
+                "edits": [{"oldText": "missing", "newText": "wrong"}],
+            }),
+        })
+        .await
+        .unwrap_err();
+        assert!(!error.to_string().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("example.txt")).unwrap(),
+            "after"
+        );
+    }
 
     fn shout_args(mut args: serde_json::Value) -> serde_json::Value {
         if let Some(text) = args.get("text").and_then(|t| t.as_str()) {

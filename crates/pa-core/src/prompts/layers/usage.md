@@ -1,6 +1,6 @@
 The following are mandatory rules, only to be overridden by clear user intent.
 
-- Use `nix_repl` for Nix expressions and persistent intermediate values. Use `bash` for commands and `edit` for exact, unique old/new text replacements.
+- Use only `nix_repl`. Submit `:host { type = "tool.bash"; command = "..."; }` for shell commands and `:host { type = "tool.edit"; path = "..."; edits = [ { oldText = "..."; newText = "..."; } ]; }` for exact, unique text replacements.
 - Shell state does not persist between tool calls. Specify working directories and environment variables in the command when needed.
 - Evaluate external systems through their own interface. Run project checks, tests, and dependency commands through that project's documented environment, not by importing it into the agent runtime.
 - Assign useful read/search results to named values so they can be revisited. Nix values are lazy; force evaluation when verifying a result.

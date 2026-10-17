@@ -2,7 +2,19 @@
 
 The core evaluation tool is `nix_repl`, a persistent Nix REPL. Submit Nix expressions, not Python. Bind intermediate values with `name = expression`, then refer to those names in later calls. Nix is lazy: binding an expression does not guarantee it has been evaluated.
 
-Use the separate `bash` tool for shell commands and the separate `edit` tool for exact text replacements. These are native tools, not Nix functions. Shell processes do not inherit REPL bindings. Run external projects through their own environment and normal command interface.
+The only model-facing tool is `nix_repl`. Run shell commands and edit files through explicit host requests, not separate tools or Nix functions. Shell processes do not inherit REPL bindings. Run external projects through their own environment and normal command interface.
+
+```nix
+:host { type = "tool.bash"; command = "git status --short"; }
+```
+
+```nix
+:host { type = "tool.edit"; path = "README.md"; edits = [ { oldText = "old text"; newText = "new text"; } ]; }
+```
+
+Interrupting a host call stops waiting, but does not cancel an already running shell command or undo edits. Use the shell `timeout` parameter where needed; never claim a command was killed merely because the REPL was interrupted.
+
+Host replies remain available as `lastHostReply`. For shell/edit calls, `lastHostReply.result.content` contains output blocks and `lastHostReply.result.isError` indicates a tool-level failure; inspect them before relying on success.
 
 ## Runtime boundaries
 
