@@ -626,7 +626,10 @@ fn the_empty_state_names_the_surface() {
     let rows = frame_text(&mut view);
     let joined = rows.join("\n");
     assert!(joined.contains("No live factory runs."), "{joined}");
-    assert!(joined.contains("await rlm.factory.run"), "{joined}");
+    assert!(
+        joined.contains("Factory execution is not available"),
+        "{joined}"
+    );
     assert!(
         joined.contains("move"),
         "the hint names the arrows: {joined}"

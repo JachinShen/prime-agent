@@ -9,7 +9,7 @@ pub const DEFAULT_SNAPSHOT_MAX_BYTES: u64 = 256 * 1024 * 1024;
 /// Default ceiling for one serialized variable.
 pub const DEFAULT_SNAPSHOT_MAX_VARIABLE_BYTES: u64 = 16 * 1024 * 1024;
 
-const KERNEL_STATE_BASENAME: &str = "kernel-state";
+const KERNEL_STATE_BASENAME: &str = "nix-kernel-state";
 
 /// One name that could not be serialized, with a short reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,18 +40,18 @@ pub struct RestoreResult {
     pub path: PathBuf,
 }
 
-/// Absolute path to the dill payload within a session's artifact directory.
+/// Absolute path to the JSON payload within a session's artifact directory.
 pub fn snapshot_path_in(artifact_dir: impl AsRef<Path>) -> PathBuf {
     artifact_dir
         .as_ref()
-        .join(format!("{KERNEL_STATE_BASENAME}.dill"))
+        .join(format!("{KERNEL_STATE_BASENAME}.json"))
 }
 
 /// Absolute path to the JSON manifest within a session's artifact directory.
 pub fn manifest_path_in(artifact_dir: impl AsRef<Path>) -> PathBuf {
     artifact_dir
         .as_ref()
-        .join(format!("{KERNEL_STATE_BASENAME}.json"))
+        .join(format!("{KERNEL_STATE_BASENAME}-manifest.json"))
 }
 
 #[cfg(test)]
@@ -62,11 +62,11 @@ mod tests {
     fn paths_match_ts_layout() {
         assert_eq!(
             snapshot_path_in("/tmp/art"),
-            PathBuf::from("/tmp/art/kernel-state.dill")
+            PathBuf::from("/tmp/art/nix-kernel-state.json")
         );
         assert_eq!(
             manifest_path_in("/tmp/art"),
-            PathBuf::from("/tmp/art/kernel-state.json")
+            PathBuf::from("/tmp/art/nix-kernel-state-manifest.json")
         );
     }
 }

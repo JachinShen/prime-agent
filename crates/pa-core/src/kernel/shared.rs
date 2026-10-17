@@ -28,7 +28,7 @@ pub const KERNEL_ABORT_GRACE_MS: u64 = 1_000;
 pub const KERNEL_BUSY_REUSE_WAIT_MS: u64 = 5_000;
 pub const KERNEL_BUSY_INTERRUPT_INTERVAL_MS: u64 = 500;
 pub const MAX_LATE_SENT_AGENT_MESSAGE_HANDLERS: usize = 256;
-pub const KERNEL_BUSY_AFTER_INTERRUPT_MESSAGE: &str = "The Python kernel is still running the previously interrupted cell. Wait and try again, or kill the kernel to start fresh.";
+pub const KERNEL_BUSY_AFTER_INTERRUPT_MESSAGE: &str = "The Nix kernel is still running the previously interrupted cell. Wait and try again, or kill the kernel to start fresh.";
 
 /// Cap for unattributed background output buffered between and during cells.
 pub const MAX_BACKGROUND_OUTPUT_CHARS: usize = 64 * 1024;

@@ -21,7 +21,7 @@ fn empty_state_digest_renders_placeholder() {
     assert!(digest.starts_with("# Continual Harness State"));
     assert!(digest.contains("No saved harness entries yet."));
     assert!(digest.contains("recent refinements: 0"));
-    assert!(digest.contains("When to call `await refine.run()`"));
+    assert!(digest.contains("Keep continual harness edits small and evidence-backed."));
     let message = harness_digest_message_text(&digest);
     assert!(message.starts_with("[harness-digest]"));
     assert!(message.ends_with("</harness_state>"));

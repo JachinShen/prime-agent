@@ -826,14 +826,13 @@ async fn prompt_persists_tool_results() {
     assert!(entry["timestamp"].as_str().is_some());
 }
 
-/// Persisted `ipython`/`python` calls dispatch through `ToolDefinitionBridge`
-/// to the registered Python tool.
+/// Nix calls execute, while historical Python names are rejected.
 #[tokio::test]
-async fn python_tool_aliases_dispatch_to_python_repl() {
+async fn nix_tool_dispatches_and_rejects_python_aliases() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let definition = crate::tools::tool_definition::ToolDefinition {
         name: pa_types::ai::PYTHON_TOOL_NAME.to_string(),
-        label: "Python".to_string(),
+        label: "Nix".to_string(),
         description: "Echoes its input".to_string(),
         prompt_snippet: String::new(),
         parameters: serde_json::json!({ "type": "object" }),
@@ -860,8 +859,10 @@ async fn python_tool_aliases_dispatch_to_python_repl() {
     provider.push_tool_call_turn(
         Some("calling"),
         vec![
-            ("call-1", "ipython", serde_json::json!({ "text": "a" })),
+            ("call-1", "nix_repl", serde_json::json!({ "text": "a" })),
             ("call-2", "python", serde_json::json!({ "text": "b" })),
+            ("call-3", "ipython", serde_json::json!({ "text": "c" })),
+            ("call-4", "python_repl", serde_json::json!({ "text": "d" })),
         ],
     );
     provider.push_text_turn("done");
@@ -886,9 +887,9 @@ async fn python_tool_aliases_dispatch_to_python_repl() {
         .unwrap();
     engine.prompt("go", PromptOptions::default()).await.unwrap();
     engine.agent().wait_for_idle().await;
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     let entries = engine.entries().await;
-    let texts: Vec<&str> = entries
+    let results: Vec<_> = entries
         .iter()
         .filter_map(|entry| match entry {
             FileEntry::Message {
@@ -897,15 +898,19 @@ async fn python_tool_aliases_dispatch_to_python_repl() {
             } => Some(result),
             _ => None,
         })
-        .map(|result| {
-            assert!(!result.is_error, "result: {result:?}");
-            match &result.content[..] {
-                [pa_types::ai::UserContentBlock::Text(text)] => text.text.as_str(),
-                _ => panic!("expected a single text block: {result:?}"),
-            }
-        })
         .collect();
-    assert_eq!(texts, ["echo:a", "echo:b"]);
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| (result.tool_name.as_str(), result.is_error))
+            .collect::<Vec<_>>(),
+        [
+            ("nix_repl", false),
+            ("python", true),
+            ("ipython", true),
+            ("python_repl", true)
+        ]
+    );
 }
 
 /// A `toolResult` entry captured from a live TS session (read-only, from

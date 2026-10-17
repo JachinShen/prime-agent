@@ -155,9 +155,9 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
     let tools: Vec<&str> = options
         .selected_tools
         .clone()
-        .unwrap_or_else(|| vec![pa_types::ai::PYTHON_TOOL_NAME]);
-    let has_ipython = tools.contains(&pa_types::ai::PYTHON_TOOL_NAME);
-    let has_file_access = has_ipython || tools.contains(&"bash");
+        .unwrap_or_else(|| vec!["nix_repl"]);
+    let has_nix = tools.contains(&"nix_repl");
+    let has_file_access = has_nix || tools.contains(&"bash");
 
     segments.push(PromptSegment::dynamic_segment(
         "packages",
@@ -174,29 +174,19 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         ));
     }
 
-    let visible_skills: Vec<&Skill> = options
+    let visible_skills: Vec<Skill> = options
         .skills
         .iter()
-        .filter(|skill| !skill.disable_model_invocation)
+        .filter(|skill| !skill.disable_model_invocation && skill.python.is_none())
+        .cloned()
         .collect();
     if has_file_access && !visible_skills.is_empty() {
-        let inventory = format_skills_for_prompt(&options.skills).trim().to_string();
+        let inventory = format_skills_for_prompt(&visible_skills).trim().to_string();
         segments.push(PromptSegment::dynamic_segment(
             "skills-inventory",
             "skill discovery",
             inventory,
         ));
-    }
-
-    if has_ipython {
-        let mcp = format_generic_mcp_guidance(&options.generic_mcp_servers);
-        if !mcp.is_empty() {
-            segments.push(PromptSegment::dynamic_segment(
-                "mcp-servers",
-                "generic MCP settings",
-                mcp,
-            ));
-        }
     }
 
     segments.push(PromptSegment::dynamic_segment(
@@ -205,7 +195,7 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
         environment_section(options),
     ));
 
-    let role = session_role_section(options, has_ipython);
+    let role = session_role_section(options, has_nix);
     if !role.is_empty() {
         segments.push(PromptSegment::dynamic_segment(
             "session-role",
@@ -237,16 +227,7 @@ pub fn system_prompt_breakdown(options: &BuildSystemPromptOptions) -> SystemProm
 }
 
 fn packages_section() -> String {
-    use crate::kernel::bootstrap::default_rlm_extra_import_labels;
-    let mut lines = vec![format!(
-        "Pre-installed Python packages: {}.",
-        default_rlm_extra_import_labels().join(", ")
-    )];
-    lines.push(
-        "Install additional packages with `uv pip install <pkg>` (this is a uv-managed venv with no pip module)."
-            .to_string(),
-    );
-    lines.join("\n")
+    "The evaluation kernel is Nix. Use the project's Nix flake or development shell for its dependencies; no Python packages are pre-imported into the REPL.".to_string()
 }
 
 fn context_files_section(context_files: &[(String, String)]) -> String {
@@ -279,36 +260,29 @@ fn environment_section(options: &BuildSystemPromptOptions) -> String {
     ];
     match options.vision_capable {
         Some(true) => lines.push(
-            "Image input: this model can see images; `attach_image` loads them into context."
+            "Image input: this model can see images, but this runtime does not provide the Python `attach_image` callable."
                 .to_string(),
         ),
         Some(false) => lines.push(
-            "Image input: this model cannot see images; `attach_image` errors for it.".to_string(),
+            "Image input: this model cannot see images.".to_string(),
         ),
         None => {}
     }
     lines.join("\n")
 }
 
-fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -> String {
+fn session_role_section(options: &BuildSystemPromptOptions, has_nix: bool) -> String {
     let depth = options.rlm_depth.unwrap_or(0);
     let mut lines = vec![format!(
         "Recursive agent depth: {depth}{}",
         if depth == 0 { " (root)" } else { " (not root)" }
     )];
-    if options.daemonless {
-        lines.push(if options.can_spawn {
-            "This session has no daemon: heartbeats never fire, and background `bash()` completions do not wake you, so await them before ending your turn. Subagent replies and exit notices still wake you, and the run waits for your subagents before it exits."
-                .to_string()
-        } else {
-            "This session has no daemon: `rlm.spawn` is unavailable, heartbeats never fire, and background `bash()` completions do not wake you, so await them before ending your turn."
-                .to_string()
-        });
+    if !has_nix {
+        lines.push("This session has no Nix REPL (`nix_repl` tool). Use only the tools offered in this session.".to_string());
     }
-    if !has_ipython {
+    if options.daemonless {
         lines.push(
-            "This session has no Python REPL (`python_repl` tool): the programmatic tools described above are unavailable here."
-                .to_string(),
+            "This session has no daemon; daemon-scheduled heartbeats are unavailable.".to_string(),
         );
     }
     if options.allow_recursion == Some(false) {
@@ -319,14 +293,6 @@ fn session_role_section(options: &BuildSystemPromptOptions, has_ipython: bool) -
             "You are a child agent spawned by {}. Task prompts are labeled `[task from parent]`.",
             options.rlm_parent_agent.unwrap_or("your parent agent")
         ));
-        if has_ipython {
-            lines.push(
-                "When a task calls for an answer, reply explicitly with `await agent_message.send(message, receiver_role=\"parent\")`. Not every message or task needs a reply; continue cleanup after sending and go idle normally.".to_string(),
-            );
-            lines.push(
-                "For long-running work, report brief progress with `await rlm.progress_note('...')` (at most 512 characters, throttled to about one note per 10 seconds); the parent sees notes without needing a reply.".to_string(),
-            );
-        }
     }
     lines.join("\n")
 }
@@ -348,39 +314,6 @@ fn today() -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}")
-}
-
-fn format_generic_mcp_guidance(servers: &[String]) -> String {
-    let mut enabled: Vec<&String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for server in servers {
-        if seen.insert(server) {
-            enabled.push(server);
-        }
-    }
-    enabled.sort();
-    if enabled.is_empty() {
-        return String::new();
-    }
-    let mut lines = vec![
-        "# Generic MCP Connections".to_string(),
-        String::new(),
-        "Generic MCP connections are accessed through the pre-imported Python `mcp` object in the Python REPL, not as top-level native tool namespaces or installed Python skills.".to_string(),
-        format!(
-            "Enabled generic MCP servers: {}.",
-            enabled
-                .iter()
-                .map(|server| format!("`{server}`"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    ];
-    for server in &enabled {
-        lines.push(format!(
-            "For `{server}`, first discover its tools with `await mcp.list_tools(\"{server}\")`, then call one with `await mcp.call_tool(\"{server}\", \"<tool>\", arguments)`."
-        ));
-    }
-    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -415,6 +348,7 @@ mod tests {
             cwd: "/w".to_string(),
             messages_path: Some("/log.jsonl".to_string()),
             skills: vec![
+                skill("nix-guide", None),
                 skill("web-search", Some("websearch")),
                 skill("refine", Some("refine")),
                 skill("agent-message", Some("agent_message")),
@@ -454,7 +388,7 @@ mod tests {
         assert!(tail.contains("Conversation log: /log.jsonl"));
         assert!(tail.contains("<available_skills>"));
         assert!(tail.contains("Recursive agent depth: 0 (root)"));
-        assert!(tail.contains("Pre-installed Python packages: requests, httpx,"));
+        assert!(tail.contains("The evaluation kernel is Nix."));
     }
 
     #[test]
@@ -473,8 +407,10 @@ mod tests {
             right.assembled[..right.cached_prefix_len]
         );
         assert_eq!(left.cached_prefix_len, right.cached_prefix_len);
-        assert!(right.assembled[right.cached_prefix_len..]
-            .contains("Enabled generic MCP servers: `slack`"));
+        assert!(!right
+            .segments
+            .iter()
+            .any(|segment| segment.name == "mcp-servers"));
         assert!(right.assembled[right.cached_prefix_len..]
             .contains("You are a child agent spawned by the lead."));
     }
@@ -497,20 +433,32 @@ mod tests {
     }
 
     #[test]
-    fn mcp_servers_are_a_tail_segment() {
+    fn inventory_exposes_only_usable_markdown_skills() {
         let mut options = base_options();
-        options.generic_mcp_servers = vec!["t".to_string(), "t".to_string()];
+        options.generic_mcp_servers = vec!["slack".to_string()];
+        let mut hidden = skill("hidden-guide", None);
+        hidden.disable_model_invocation = true;
+        options.skills.push(hidden);
         let breakdown = system_prompt_breakdown(&options);
-        let names: Vec<&str> = breakdown
+        let inventory = breakdown
             .segments
             .iter()
-            .map(|segment| segment.name)
-            .collect();
-        assert!(names.contains(&"mcp-servers"));
-        assert!(breakdown.assembled.contains("# Generic MCP Connections"));
-        assert!(breakdown
-            .assembled
-            .contains("Enabled generic MCP servers: `t`."));
+            .find(|segment| segment.name == "skills-inventory")
+            .expect("Markdown skill is available");
+        assert!(inventory.text.contains("nix-guide"));
+        assert!(!inventory.text.contains("web-search"));
+        assert!(!inventory.text.contains("hidden-guide"));
+        assert!(!breakdown
+            .segments
+            .iter()
+            .any(|segment| segment.name == "mcp-servers"));
+
+        options.skills.retain(|skill| skill.python.is_some());
+        let only_python = system_prompt_breakdown(&options);
+        assert!(!only_python
+            .segments
+            .iter()
+            .any(|segment| segment.name == "skills-inventory"));
     }
 
     #[test]

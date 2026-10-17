@@ -623,7 +623,7 @@ impl FactoryView {
                 Span::raw("  "),
                 theme.fg_span(
                     ThemeColor::Muted,
-                    "Start one from the conversation: await rlm.factory.run('<spec_id>')",
+                    "Factory execution is not available in the Nix backend.",
                 ),
             ]);
         }

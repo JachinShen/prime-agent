@@ -249,7 +249,7 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
     .description(
         "Machines are MACHINE.md templates (frontmatter plus a fenced machine-spec block) \
 resolved from the bundled library shipped inside the runtime, then from the personal \
-library under the agent dir. Run one with `await rlm.factory.run(\"<name>\")` from a session.",
+library under the agent dir. Factory execution is not available in the Nix backend.",
     ),
     CommandSpec::new(
         &["factory", "list"],
@@ -548,7 +548,7 @@ pub fn format_top_level_help() -> String {
         })
         .collect();
     format!(
-        "{APP_NAME} - AI coding assistant with a Python REPL tool\n\
+        "{APP_NAME} - AI coding assistant with a Nix REPL tool\n\
          \n\
          Usage:\n\
          \x20 {APP_NAME} [options] [@files...] [message...]\n\

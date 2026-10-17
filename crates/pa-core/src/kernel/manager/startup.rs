@@ -110,7 +110,7 @@ impl Inner {
             return Ok(cached);
         }
         let progress = options.on_bootstrap_progress.clone();
-        let skills = self.options.python_skills.clone();
+        let skills = Vec::new();
         let python = crate::kernel::bootstrap::ensure_kernel_python(
             crate::kernel::bootstrap::EnsureKernelPythonOptions {
                 python_skills: skills,
@@ -167,7 +167,7 @@ impl Inner {
         let cwd = self.options.cwd.clone();
         let mut command = tokio::process::Command::new(&python);
         command
-            .args(["-m", "rlm.repl"])
+            .args(["-m", "rlm.nix_repl"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());

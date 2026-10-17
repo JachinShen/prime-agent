@@ -467,8 +467,8 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         python_skills,
         cwd.clone(),
         &config.agent_dir,
-        kernel_shell_path,
-        kernel_command_prefix,
+        kernel_shell_path.clone(),
+        kernel_command_prefix.clone(),
         serper_api_key,
         session_artifact_dir,
         on_restore,
@@ -488,6 +488,23 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         tools.push(Arc::new(
             crate::session_engine::tool_bridge::ToolDefinitionBridge::new(definition),
         ));
+    }
+    for definition in [
+        crate::create_bash_tool_definition_with_options(
+            &cwd.to_string_lossy(),
+            &crate::BashToolOptions {
+                shell_path: kernel_shell_path.map(|path| path.to_string_lossy().to_string()),
+                command_prefix: kernel_command_prefix,
+                ..Default::default()
+            },
+        ),
+        crate::create_edit_tool_definition(&cwd.to_string_lossy()),
+    ] {
+        if !tools.iter().any(|tool| tool.name() == definition.name) {
+            tools.push(Arc::new(
+                crate::session_engine::tool_bridge::ToolDefinitionBridge::new(definition),
+            ));
+        }
     }
     let active_tool_names: Vec<String> = tools.iter().map(|tool| tool.name().to_string()).collect();
 

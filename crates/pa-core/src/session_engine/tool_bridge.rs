@@ -9,7 +9,6 @@ use pa_agent::types::{
     AgentTool, AgentToolResult, AgentToolUpdateCallback,
     ToolExecutionMode as LoopToolExecutionMode, ToolResultContent,
 };
-use pa_types::ai::{is_python_tool_name, PYTHON_TOOL_NAME};
 
 use crate::tools::tool_definition::{ExecutionMode, ToolDefinition, ToolExecutionResult};
 
@@ -69,8 +68,8 @@ impl AgentTool for ToolDefinitionBridge {
             .map(|prepare| prepare(args.clone()))
     }
 
-    fn accepts_alias(&self, name: &str) -> bool {
-        self.definition.name == PYTHON_TOOL_NAME && is_python_tool_name(name)
+    fn accepts_alias(&self, _name: &str) -> bool {
+        false
     }
 
     fn execute(
@@ -249,6 +248,17 @@ mod tests {
             updates[0].content,
             vec![ToolResultContent::text("starting")]
         );
+    }
+
+    #[test]
+    fn nix_tool_does_not_execute_legacy_python_calls() {
+        let mut definition = echo_definition(false);
+        definition.name = pa_types::ai::PYTHON_TOOL_NAME.to_string();
+        let tool = bridge_tool(definition);
+        for name in ["python_repl", "python", "ipython"] {
+            assert!(!tool.accepts_alias(name));
+        }
+        assert_eq!(tool.name(), "nix_repl");
     }
 
     #[tokio::test]

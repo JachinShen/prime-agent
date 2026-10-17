@@ -1,4 +1,4 @@
-//! The post-compaction kernel-state notice (`ipython_state`): the Python kernel survives
+//! The post-compaction kernel-state notice (`ipython_state`): the Nix kernel survives
 //! compaction with its namespace intact, so after every compaction that commits while a kernel
 //! runs the session appends a hidden `ipython_state` row telling the model which names are
 //! still defined and what pruning removed.
@@ -113,7 +113,7 @@ fn now_millis() -> u64 {
         .unwrap_or_default()
 }
 
-/// The notice text: the `[python-state]` header, the persistence statement, the pruning
+/// The notice text: the `[nix-state]` header, the persistence statement, the pruning
 /// disclosure, and the live-names detail. `names` is `None` on a failed listing.
 #[must_use]
 pub fn notice_content(pruned: Option<&[String]>, names: Option<&[String]>) -> String {
@@ -132,9 +132,9 @@ pub fn notice_content(pruned: Option<&[String]>, names: Option<&[String]>) -> St
         _ => String::new(),
     };
     format!(
-        "[python-state]
+        "[nix-state]
 
-Your Python kernel persisted through compaction; its remaining variables, imports, and helpers are still available.{pruned_detail}{detail}"
+Your Nix kernel persisted through compaction; its remaining bindings are still available.{pruned_detail}{detail}"
     )
 }
 
@@ -302,19 +302,19 @@ mod tests {
                 Some(&["large_text".to_string()]),
                 Some(&["small_value".to_string()]),
             ),
-            "[python-state]\n\nYour Python kernel persisted through compaction; its remaining variables, imports, and helpers are still available. Variables above the per-variable snapshot limit were removed: large_text. These names are still defined: small_value."
+            "[nix-state]\n\nYour Nix kernel persisted through compaction; its remaining bindings are still available. Variables above the per-variable snapshot limit were removed: large_text. These names are still defined: small_value."
         );
         assert_eq!(
             notice_content(None, Some(&[])),
-            "[python-state]\n\nYour Python kernel persisted through compaction; its remaining variables, imports, and helpers are still available. You have not defined any names yet."
+            "[nix-state]\n\nYour Nix kernel persisted through compaction; its remaining bindings are still available. You have not defined any names yet."
         );
         assert_eq!(
             notice_content(Some(&["large_text".to_string()]), None),
-            "[python-state]\n\nYour Python kernel persisted through compaction; its remaining variables, imports, and helpers are still available. Variables above the per-variable snapshot limit were removed: large_text."
+            "[nix-state]\n\nYour Nix kernel persisted through compaction; its remaining bindings are still available. Variables above the per-variable snapshot limit were removed: large_text."
         );
         assert_eq!(
             notice_content(None, Some(&["alpha".to_string(), "beta".to_string()])),
-            "[python-state]\n\nYour Python kernel persisted through compaction; its remaining variables, imports, and helpers are still available. These names are still defined: alpha, beta."
+            "[nix-state]\n\nYour Nix kernel persisted through compaction; its remaining bindings are still available. These names are still defined: alpha, beta."
         );
         assert!(notice_content(Some(&[]), Some(&["v".to_string()]))
             .contains("still available. These names"));
@@ -333,7 +333,7 @@ mod tests {
         assert!(wire.get("details").is_none());
         assert_eq!(
             wire["content"],
-            "[python-state]\n\nYour Python kernel persisted through compaction; its remaining variables, imports, and helpers are still available. These names are still defined: v."
+            "[nix-state]\n\nYour Nix kernel persisted through compaction; its remaining bindings are still available. These names are still defined: v."
         );
     }
 
@@ -352,7 +352,7 @@ mod tests {
         assert_eq!(
             content,
             Some(
-                "[python-state]\n\nYour Python kernel persisted through compaction; its remaining variables, imports, and helpers are still available."
+                "[nix-state]\n\nYour Nix kernel persisted through compaction; its remaining bindings are still available."
                     .to_string()
             )
         );
@@ -469,7 +469,7 @@ mod tests {
         assert_eq!(row.custom_type, IPYTHON_STATE_CUSTOM_TYPE);
         assert_eq!(
             row.content.text(),
-            "[python-state]\n\nYour Python kernel persisted through compaction; its remaining variables, imports, and helpers are still available. Variables above the per-variable snapshot limit were removed: large_text. These names are still defined: small_value."
+            "[nix-state]\n\nYour Nix kernel persisted through compaction; its remaining bindings are still available. Variables above the per-variable snapshot limit were removed: large_text. These names are still defined: small_value."
         );
         let entries = engine.entries().await;
         let last = entries.last().expect("entries");

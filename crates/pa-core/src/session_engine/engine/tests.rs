@@ -328,8 +328,8 @@ async fn oauth_creds_unlock_generic_mcp_gating_in_new_sessions() {
     let engine = create_session(config(&cwd, &agent_dir, provider.stream_fn()))
         .await
         .unwrap();
-    assert!(engine.system_prompt.contains("# Generic MCP Connections"));
-    assert!(engine.system_prompt.contains("`fixture-oauth`"));
+    // Credentials remain stored, but Nix does not expose the Python MCP API.
+    assert!(!engine.system_prompt.contains("# Generic MCP Connections"));
 }
 
 #[tokio::test]
@@ -378,7 +378,7 @@ async fn create_session_registers_goal_and_heartbeat_handlers() {
         .map(|tool| tool.name().to_string())
         .collect();
     assert!(
-        names.iter().any(|name| name == "python_repl"),
+        names.iter().any(|name| name == "nix_repl"),
         "tools: {names:?}"
     );
 }

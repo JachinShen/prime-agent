@@ -1,4 +1,4 @@
-//! The `ipython` tool: persistent Python REPL execution through a kernel —
+//! The `ipython` tool: persistent Nix REPL execution through a kernel —
 //! the model-facing definition, result text composition, busy-kernel choice,
 //! and the rlm bootstrap code. Kernel process management lives behind the
 //! [`IpythonKernelProvisioner`] trait, owned by the kernel manager module.
@@ -118,7 +118,7 @@ impl std::fmt::Display for KernelBusyAfterInterruptError {
 impl Default for KernelBusyAfterInterruptError {
     fn default() -> Self {
         Self {
-            message: "The Python kernel is still running the previously interrupted cell. Wait and try again, or kill the kernel to start fresh.".to_string(),
+            message: "The Nix kernel is still running the previously interrupted cell. Wait and try again, or kill the kernel to start fresh.".to_string(),
         }
     }
 }
@@ -176,7 +176,7 @@ pub type BootstrapProgressHandler = Arc<dyn Fn(&str) + Send + Sync>;
 
 type EnsureFuture = Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn KernelExecutor>>> + Send>>;
 
-/// Owns the lazy create+start+bootstrap of one session's Python kernel.
+/// Owns the lazy create+start+bootstrap of one session's Nix kernel.
 /// Implementations memoize one running kernel (concurrent `ensure` calls await
 /// the same in-flight startup; a failed startup clears the memo), and `kill`
 /// terminates the kernel losing all in-memory state. Object-safe on purpose.
@@ -199,7 +199,7 @@ pub const BUSY_KERNEL_KILL_CHOICE: &str = "Kill kernel and restart";
 
 pub fn busy_kernel_prompt() -> String {
     [
-        "Interrupted Python cell is still running",
+        "Interrupted Nix cell is still running",
         "Ctrl+C sent an interrupt, but the previous cell has not stopped yet. A new command cannot start until it finishes.",
         "Waiting preserves the current kernel state. Killing restarts the kernel and loses in-memory variables, imports, and running tasks.",
     ]
@@ -207,7 +207,7 @@ pub fn busy_kernel_prompt() -> String {
 }
 
 pub fn kernel_restart_notice() -> &'static str {
-    "<ipython_kernel_reset>\nThe Python kernel was restarted after a previous interrupted cell kept running. Variables, imports, async tasks, and open resources from before the restart are no longer available; recreate them before using them.\n</ipython_kernel_reset>"
+    "<ipython_kernel_reset>\nThe Nix kernel was restarted after a previous interrupted cell kept running. Variables, imports, async tasks, and open resources from before the restart are no longer available; recreate them before using them.\n</ipython_kernel_reset>"
 }
 
 /// The UI surface the ipython tool needs from the host session (the TS tool context).
@@ -314,10 +314,10 @@ async fn execute_with_busy_kernel_choice(
                     .await;
                 match choice.as_deref() {
                     Some(BUSY_KERNEL_WAIT_CHOICE) => {
-                        on_working_message(Some("Waiting for Python kernel..."));
+                        on_working_message(Some("Waiting for Nix kernel..."));
                     }
                     Some(BUSY_KERNEL_KILL_CHOICE) => {
-                        on_working_message(Some("Restarting Python kernel..."));
+                        on_working_message(Some("Restarting Nix kernel..."));
                         provisioner.kill().await;
                         kernel_restarted = true;
                     }
@@ -343,14 +343,14 @@ pub fn ipython_tool_schema() -> serde_json::Value {
         "properties": {
             "code": {
                 "type": "string",
-                "description": "Python code to execute in the persistent Python REPL. Use the target project's own environment for project imports, tests, scripts, CLIs, and dependency checks instead of direct kernel imports."
+                "description": "Nix expressions, bindings, or supported REPL commands. Use bash for shell commands and edit for file changes."
             }
         }
     })
 }
 
 pub fn ipython_tool_description() -> &'static str {
-    "Execute Python code in a persistent Python REPL. Top-level `await` is supported. Variables, imports, and loaded data persist across calls, and are revived on a best-effort basis when a session is resumed (objects that cannot be serialized are dropped and reported). Run shell commands with `bash('cmd')` / `await bash('cmd')`. Project imports, tests, scripts, CLIs, and dependency checks should run through the target project's own environment."
+    "Evaluate Nix expressions and bindings in a persistent real nix repl. Bindings survive calls; directly assigned literal values are restored best-effort on resume. Python and top-level await are not supported. Use standalone bash and edit tools for side effects. Host APIs use :host followed by a Nix attribute set."
 }
 
 #[tracing::instrument(
@@ -485,7 +485,7 @@ pub async fn execute_ipython(
     })
 }
 
-/// The `python_repl` tool definition: exact name, schema, and description.
+/// The `nix_repl` tool definition: exact name, schema, and description.
 #[must_use]
 pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -> ToolDefinition {
     let options = Arc::new(options);
@@ -504,7 +504,7 @@ pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -
                 let code = params
                     .get("code")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("python_repl tool requires a code string"))?
+                    .ok_or_else(|| anyhow::anyhow!("nix_repl tool requires a code string"))?
                     .to_string();
                 execute_ipython(
                     &options,
@@ -521,9 +521,7 @@ pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -
         name: pa_types::ai::PYTHON_TOOL_NAME.to_string(),
         label: pa_types::ai::PYTHON_TOOL_NAME.to_string(),
         description: ipython_tool_description().to_string(),
-        prompt_snippet:
-            "python_repl - persistent Python REPL for code, state, and bash() orchestration"
-                .to_string(),
+        prompt_snippet: "nix_repl - persistent Nix REPL for expressions and bindings".to_string(),
         // The kernel is single-threaded; calls must not run in parallel.
         execution_mode: Some(ExecutionMode::Sequential),
         parameters: ipython_tool_schema(),

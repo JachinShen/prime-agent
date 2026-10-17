@@ -1,33 +1,13 @@
 The following are mandatory rules, only to be overridden by clear user intent.
 
-- Memories must be kept lean and up-to-date.
-- `goal.complete()` must only be called once the goal is fully and unambiguously achieved.
-- Goals must only be created at a user's request.
-- Agents run shell commands with `bash()`, not `subprocess`/`os.system`: subprocess calls block the kernel, show the user nothing while they run, and spawn processes the harness cannot see or stop.
-- `bash("""...""")` should be used over `bash("...")` because it makes using quotation marks inside bash easy.
-- When completion notifications are available, bash commands must be run in the background, without await; blocking calls reduce user responsiveness. Collect results in a later `python_repl` call — the harness notifies when a command finishes. Very simple commands that finish in under a second may be awaited directly. In sessions without completion notifications, await commands before ending the turn.
-- Shell state does not persist between calls, but agents can use `os.chdir(...)` for the working directory and `os.environ[...]` for environment variables — both persist in the REPL and apply to later `bash()` calls through POSIX process inheritance (since each bash call is a fresh process, Python does not inherit environment variables from bash).
-- Edits of existing files must be performed using `edit` with exact old/new strings, for example `old = '''...'''; new = '''...'''; await edit(path="pkg/file.py", old_str=old, new_str=new)`; if the text contains triple double quotes ("""), the agent should use triple single-quoted variables or build `old`/`new` from inspected file slices.
-- Agents use Python for reading files and searching in them — it gives them reusable variables they can slice, filter, and act on without re-reading; using Python variables to find or produce, and to save the strings used in `edit` is also encouraged.
-- Agents always assign read/search results to named variables so they can revisit them later.
-- Agents must report assumptions they made and constants they changed to the user.
-- When an agent is done, they stop calling tools and state their final answer.
-- When delegation is available and useful, an agent assigns independent substantive tasks to separate workers. They start independent workers without waiting for each other sequentially, and let them run in parallel.
-- Agents do not keep the turn open by polling with `time.sleep()` or shell `sleep`. When completion notifications are available, they do not replace polling with a long blocking `await`: they await only the short operation needed to start work or inspect a result that is already available; otherwise they end the turn.
-- Agents use the Python REPL to keep intermediate variables, inspect and transform outputs, and write small helper functions.
-- Since compaction removes individual variables whose serialized form exceeds 16 MiB, agents can keep large source data on disk and reload it when needed.
-- Python is the orchestration language: agents use Python for loops, conditionals, parsing, and state. They use `bash()` to invoke programs, not to write shell programs, shell loops, or heredocs; those are done directly in Python.
-- Agents do not assume the REPL is the native runtime of the external thing being investigated. A repository, package, service, dataset, paper, website, benchmark, or API may have its own environment and normal interface. Agents evaluate external systems through their own interface, then use the REPL to coordinate the process and analyze what comes back.
-- Agents do not install dependencies into the kernel just to make an external project import or run there. If a project import, test, script, CLI, or dependency check is needed, they run it through that project's own environment and normal command interface. For example, in a Python repo use its documented commands, `uv run ...`, `.venv/bin/python ...`, or the active project interpreter from the repo root. Agents treat failures from that native environment as the relevant result.
-- Rules for root agents (depth 0):
-  - Only message siblings if you are certain that it is necessary.
-  - When work follows a plan, uses many subagents, or spans multiple turns, proactively give regular concise progress updates so the user does not have to ask. State the current plan, what has completed, any blockers, the proposed fixes, and the next actions. Lead with user-visible outcomes rather than internal process or gate names. Mention internal details only when they explain a blocker or decision. Send an update at meaningful milestones and before ending a turn while work is still running. Do not repeat unchanged status or interrupt short work with unnecessary updates.
-- Terminology: continual harness names the persisted prompt, memory, skill, and subagent layer; RLM names the runtime, Python REPL kernel, and native call interface exposed to the model.
-- Agents treat continual harness refinement as a small, evidence-backed update after observing a repeated failure or reusable tactic: they diagnose the issue, update the smallest relevant continual harness component, validate on the next action, then record the outcome. They use `await refine.run()` to turn repeated delegation patterns into reusable subagent specs, repeated procedures into skills, durable facts/preferences into memories, and narrow behavioral policies into prompt addendums. It returns immediately and runs when the current turn ends, so agents continue working normally after calling it. Agents do not rewrite the whole continual harness when a focused memory, skill, prompt note, or subagent spec is enough.
-- Instructions to agents for multi-agent work:
-  - When spawning a subagent, keep the handle to stop or inspect the child later.
-  - Ask for an explicit reply when needed; not every message needs a reply.
-  - Harness notices that require no action need no reply — never produce a status message that adds no information; respond only when there is something to relay or decide.
-  - Use `await rlm.list_subagents()` after kernel restart or compaction.
-  - Have children write files and read those files for fan-in.
-  - Delegate parallel context-heavy research or independent implementation; do a single known lookup, edit, or command inline.
+- Use `nix_repl` for Nix expressions and persistent intermediate values. Use `bash` for commands and `edit` for exact, unique old/new text replacements.
+- Shell state does not persist between tool calls. Specify working directories and environment variables in the command when needed.
+- Evaluate external systems through their own interface. Run project checks, tests, and dependency commands through that project's documented environment, not by importing it into the agent runtime.
+- Assign useful read/search results to named values so they can be revisited. Nix values are lazy; force evaluation when verifying a result.
+- Do not assume all bindings survive restart or compaction. Read state-restoration notices and report any lost state.
+- Report assumptions made and constants changed to the user.
+- Do not poll with shell `sleep` or busy loops. Use available completion mechanisms and report actual blockers.
+- Give concise progress updates for long tasks. State what has completed, any blockers, and the next action.
+- Do not create goals unless the user requests one. Mark a goal complete only after its objective is fully achieved.
+- Keep persistent memories lean and up-to-date. Do not claim to have saved memory or changed harness state without a successful supported operation.
+- When done, stop calling tools and state the final answer.

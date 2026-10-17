@@ -205,8 +205,6 @@ pub fn format_harness_state_for_prompt(
     let max_content_length = options
         .max_content_length
         .unwrap_or(DEFAULT_OVERVIEW_CONTENT_LIMIT);
-    let include_ipython = options.include_ipython_examples.unwrap_or(true);
-    let include_refine = options.include_refine_examples.unwrap_or(include_ipython);
 
     let mut lines: Vec<String> = vec![
         "# Continual Harness State".to_string(),
@@ -216,19 +214,9 @@ pub fn format_harness_state_for_prompt(
         "Default to local continual harness refinement for current task progress, temporary blockers, and session coordination. Use global continual harness refinement only for stable cross-session lessons, durable user preferences, reusable skills/subagents, or explicitly project-qualified facts.".to_string(),
         "Use these continual harness prompt notes, memories, skills, and subagent specs when they are relevant. The base system prompt is immutable; prompt entries below are supplemental notes only.".to_string(),
         String::new(),
-        if include_refine {
-            "When to call `await refine.run()`: after a repeated failure, a reusable tactic emerges, a repeated delegation role should become a subagent spec, a repeated procedure should become a skill, a durable fact/preference should become a memory, a narrow behavioral policy should become a prompt addendum, a user corrects behavior that should persist locally or globally, validation shows a continual harness entry is wrong, or a skill/subagent/memory/prompt note should be created, updated, deleted, or rolled back. Keep `await refine.run()` continual harness edits small and evidence-backed.".to_string()
-        } else {
-            "When to refine the continual harness: after a repeated failure, a reusable tactic emerges, a repeated delegation role should become a subagent spec, a repeated procedure should become a skill, a durable fact/preference should become a memory, a narrow behavioral policy should become a prompt addendum, a user corrects behavior that should persist locally or globally, validation shows a continual harness entry is wrong, or a skill/subagent/memory/prompt note should be created, updated, deleted, or rolled back. Keep continual harness edits small and evidence-backed.".to_string()
-        },
+        "Refine only after evidence of a repeated failure or reusable lesson. Keep continual harness edits small and evidence-backed.".to_string(),
         String::new(),
-        if include_ipython {
-            "Call contract: read each installed Python skill's SKILL.md and call its documented module function in the Python REPL; do not assume a `.run` entrypoint. Use `<skill_import> ...` in shell when a CLI exists. Continual harness skill entries are Python REPL skills with an explicit Python `reference` and `arguments` contract. Spawn a continual harness subagent spec by composing a concise task prompt and calling `handle = await rlm.spawn('sub-task', name='worker')`; admission returns immediately with `rlm_child_id`, `name`, `session_dir`, and `model`, never the child's answer. Results arrive only through explicit `agent_message` replies or files; children reply with `await agent_message.send(message, receiver_role='parent')`. Use `await rlm.list_subagents()` to recover direct child handles and `await agent_message.send(..., receiver_role='child', receiver_name=handle.name)` for follow-ups. Do not invent wrappers such as `call_skill(...)`, `run_subagent(...)`, or named subagent registries.".to_string()
-        } else if options.include_shell_examples {
-            "Call contract: use installed skills as shell commands when available (for example `<skill_import> ...`). Continual harness entries are routing/context hints only in sessions without the Python REPL; do not use Python `await`, `asyncio`, or `rlm` examples unless the prompt also documents a Python kernel.".to_string()
-        } else {
-            "Call contract: continual harness entries are routing/context hints only in sessions without the Python REPL or shell access; do not use Python `await`, `asyncio`, `rlm`, or shell skill commands unless the prompt also documents those interfaces.".to_string()
-        },
+        "Call contract: this session uses Nix, not Python. Historical harness entries may contain Python examples; do not execute them in nix_repl. Use only the Nix host bridge documented in the system prompt. Python-backed skills and factory workflows are not available in this backend.".to_string(),
         String::new(),
     ];
 
@@ -262,16 +250,7 @@ pub fn format_harness_state_for_prompt(
         });
         total_entries += entries.len();
         let kind_name = kind;
-        if kind_name == "subagent" && !entries.is_empty() && include_ipython {
-            lines.push(format!("{kind_name}: {} (invoke a spec by turning it into a concise task prompt and spawning with `await rlm.spawn('<task>', name='<worker>')`; admission returns a child handle, never the answer)", entries.len()));
-        } else if kind_name == "factory" && !entries.is_empty() && include_ipython {
-            lines.push(format!(
-                "{kind_name}: {} (state-machine workflow specs; run one with `await rlm.factory.run('<id>')`; watch with `await rlm.factory.status(run_id)`, stop with `await rlm.factory.stop(run_id)`, resume a paused run with `await rlm.factory.resume(run_id)`)",
-                entries.len()
-            ));
-        } else {
-            lines.push(format!("{kind_name}: {}", entries.len()));
-        }
+        lines.push(format!("{kind_name}: {}", entries.len()));
         if let Some(terms) = query_terms.as_ref() {
             if !terms.is_empty() && entries.len() > max_entries_per_kind {
                 lines.push(
@@ -663,9 +642,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(rendered.contains(
-            "factory: 1 (state-machine workflow specs; run one with `await rlm.factory.run('<id>')`; watch with `await rlm.factory.status(run_id)`, stop with `await rlm.factory.stop(run_id)`, resume a paused run with `await rlm.factory.resume(run_id)`)"
-        ));
+        assert!(rendered.contains("\nfactory: 1\n"));
         assert!(rendered.contains("- [global:sweep] PR review sweep (review, v1): Sweep review."));
         // Without IPython examples the hint line stays a plain count.
         let plain = format_harness_state_for_prompt(
@@ -905,7 +882,7 @@ mod tests {
         assert!(text.contains("- [local:m1] Fact (/m/m1, v2): the build is green"));
         assert!(text.contains("recent refinements: 1"));
         assert!(text.contains("routing improved"));
-        assert!(text.contains("When to call `await refine.run()`"));
+        assert!(text.contains("Keep continual harness edits small and evidence-backed."));
         let empty_text = format_harness_state_for_prompt(
             &empty_harness_state(),
             &HarnessStatePromptOptions::default(),

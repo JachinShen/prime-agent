@@ -8,6 +8,15 @@
   </a>
 </p>
 
+> **Experimental Nix REPL fork:** [`JachinShen/prime-agent`, branch
+> `feat/nix-repl-kernel`](https://github.com/JachinShen/prime-agent/tree/feat/nix-repl-kernel)
+> replaces the model-facing Python
+> execution kernel with a persistent `nix repl`. The application host remains
+> Rust, with a Python transport adapter. This is not upstream Prime Agent and
+> does not provide Python-kernel feature parity. See [Nix kernel](docs/nix-kernel.md)
+> for setup, supported operations, and limitations. Upstream installers below
+> install upstream Prime Agent, **not this fork**.
+
 <h3 align="center">
 Prime Agent: A Self-Improving RLM Harness
 </h3>
@@ -38,7 +47,7 @@ Prime Agent is an open-source coding and research agent for general and long-run
 - The **[Recursive Language Model (RLM)](https://www.primeintellect.ai/blog/rlm)** treats context as variables (*prompt-as-a-variable*) and tools like recursive subagents as function calls (*programmatic tool /sub-agent calling*) inside a persistent REPL.
 - The **[Continual Harness](https://arxiv.org/abs/2605.09998)** stores supplemental prompts, memories, skill descriptions, and reusable subagent specifications as durable state that Prime Agent can refine through small, evidence-backed updates, local to the session by default.
 
-## Install
+## Upstream installation (not this fork)
 
 Install the latest stable version with the one-command installer:
 

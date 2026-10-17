@@ -16,19 +16,19 @@ fn now_millis() -> u64 {
         .unwrap_or_default()
 }
 
-/// The notice text: the `[python-state-restored]` header, the
+/// The notice text: the `[nix-state-restored]` header, the
 /// revived-or-fresh line, the failed-names disclosure, and the env/cwd
 /// reset line (a fresh kernel revives neither).
 #[must_use]
 pub fn notice_content(result: &RestoreResult) -> String {
-    let mut lines = vec!["[python-state-restored]".to_string(), String::new()];
+    let mut lines = vec!["[nix-state-restored]".to_string(), String::new()];
     if result.restored.is_empty() {
         lines.push(
-            "Your previous Python kernel state could not be revived; the kernel is starting fresh, so re-create any variables, imports, or loaded data you need.".to_string(),
+            "Your previous Nix kernel state could not be revived; the kernel is starting fresh, so re-create any bindings you need.".to_string(),
         );
     } else {
         lines.push(format!(
-            "Your Python kernel state was revived from your previous session. These names are available again: {}.",
+            "Your Nix kernel state was revived from your previous session. These names are available again: {}.",
             result.restored.join(", ")
         ));
     }
@@ -44,7 +44,7 @@ pub fn notice_content(result: &RestoreResult) -> String {
         ));
     }
     lines.push(
-        "The working directory and environment variables were reset to the session defaults; re-apply any os.chdir(...) or os.environ[...] changes you still need.".to_string(),
+        "The working directory and environment variables were reset to the session defaults; only saved literal bindings were restored.".to_string(),
     );
     lines.join("\n")
 }
@@ -80,7 +80,7 @@ mod tests {
                     reason: reason.to_string(),
                 })
                 .collect(),
-            path: std::path::PathBuf::from("/tmp/art/kernel-state.dill"),
+            path: std::path::PathBuf::from("/tmp/art/nix-kernel-state.json"),
         }
     }
 
@@ -98,7 +98,7 @@ mod tests {
         };
         assert_eq!(
             content,
-            "[python-state-restored]\n\nYour Python kernel state was revived from your previous session. These names are available again: data, helper.\nThe working directory and environment variables were reset to the session defaults; re-apply any os.chdir(...) or os.environ[...] changes you still need."
+            "[nix-state-restored]\n\nYour Nix kernel state was revived from your previous session. These names are available again: data, helper.\nThe working directory and environment variables were reset to the session defaults; only saved literal bindings were restored."
         );
     }
 
@@ -114,7 +114,7 @@ mod tests {
         };
         assert_eq!(
             content,
-            "[python-state-restored]\n\nYour previous Python kernel state could not be revived; the kernel is starting fresh, so re-create any variables, imports, or loaded data you need.\nThe working directory and environment variables were reset to the session defaults; re-apply any os.chdir(...) or os.environ[...] changes you still need."
+            "[nix-state-restored]\n\nYour previous Nix kernel state could not be revived; the kernel is starting fresh, so re-create any bindings you need.\nThe working directory and environment variables were reset to the session defaults; only saved literal bindings were restored."
         );
     }
 
