@@ -1,1 +1,1 @@
-Use `nix_repl` with `:host { type = "tool.bash"; command = "..."; }` for shell commands. Do not write Python subprocess code or call `bash()` inside Nix expressions.
+Use `nix_repl` with `:run result "command"` for synchronous shell commands. Results are Nix attributes (`stdout`, `stderr`, `exitCode`). Do not write Python subprocess code or call `bash()` inside Nix expressions.

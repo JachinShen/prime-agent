@@ -1,167 +1,163 @@
-# Experimental Nix execution kernel
+# Experimental native Nix execution kernel
 
-This fork uses a real, persistent `nix repl` for model code instead of the
-upstream Python REPL. Rust still hosts the application. Python is only the
-JSON-lines transport adapter (`rlm.nix_repl`); model cells are not Python code.
+The only model-facing tool is `nix_repl`. The Rust application starts its own
+native transport mode, which controls a real persistent `nix repl`. No Python
+interpreter, virtual environment, or Python kernel bootstrap is needed for this
+execution path. Legacy Python source in the repository is not the Nix backend.
 
-## Scope
+## Build and run
 
-The model uses `nix_repl` to evaluate Nix expressions and keep bindings between
-calls. It is the only model-facing tool. Shell commands and file edits use
-`:host { type = "tool.bash"; command = "..."; }` and
-`:host { type = "tool.edit"; path = "..."; edits = [ { oldText = "..."; newText = "..."; } ]; }`.
-Use shell commands such as `nix shell ... -c ...` or `nix develop ... -c ...` to run other languages and
-programs. A derivation build is not a general-purpose side-effect runner:
-substitution/caching can skip its commands and builds normally run sandboxed.
-
-This is an experimental fork, not a feature-equivalent upstream release.
-Existing Python skill imports and Python snippets cannot run in Nix cells.
-Never translate an unavailable capability into an invented Nix function.
-
-## Build and run from this checkout
-
-Prerequisites: Nix on PATH, Cargo/Rust, and uv. On NixOS, use a compiler shell
-for the Rust build (the package reference follows your local `nixpkgs` registry):
+Prerequisites: Nix (`nix` and `nix-instantiate`) on PATH and Cargo/Rust.
+On NixOS:
 
 ```sh
-uv sync --project prime-agent-runtime --group dev
 nix shell nixpkgs#gcc nixpkgs#pkg-config -c cargo build -p pa-cli --locked
-export PRIME_AGENT_KERNEL_PYTHON="$PWD/prime-agent-runtime/.venv/bin/python"
-./target/debug/prime-agent
+./target/debug/prime-agent --daemon-socket /tmp/prime-agent-nix-native.sock \
+  --no-skills --no-context-files
 ```
 
-The Python override selects this checkout's adapter instead of an installed
-upstream runtime. The adapter does not require the old scientific Python
-packages (numpy, pandas, scipy, etc.) or dill. Startup checks the Nix adapter
-entry point and protocol, not those legacy dependencies. Start a fresh session; do not reuse a running upstream daemon
-or assume that old Python cells/checkpoints can resume as Nix.
+Start a fresh session on a new socket rather than reusing a running daemon from
+an older build. `PRIME_AGENT_KERNEL_PYTHON` is not needed for the native backend.
+The CLI retains upstream version 0.10.0; identify this fork by Git commit.
 
-## Example cells
+## Synchronous commands and named results
+
+These colon commands are adapter extensions, not upstream Nix language syntax.
+They execute synchronously. There is no background-task API.
+
+Run a shell command and name its captured result:
 
 ```nix
-answer = 40 + 2
+:run result "printf hello"
 ```
 
-In a subsequent call:
+The display shows `hello`, not a nested protocol envelope. Later cells can use:
+
+```nix
+result.stdout
+result.stderr
+result.exitCode
+```
+
+Multiple named results coexist. Later commands may use earlier values:
+
+```nix
+:run next ("printf '%s' " + pkgs.lib.escapeShellArg result.stdout)
+```
+
+The composition example assumes `pkgs` is a bound nixpkgs package set. Use
+`pkgs.lib.escapeShellArg` for arbitrary shell arguments; do not concatenate
+unescaped output into shell code.
+
+Command options are a Nix attribute set:
+
+```nix
+:run checked { command = "git status --short"; timeout = 30; }
+```
+
+A nonzero exit or signal termination preserves the structured result and reports
+the call as failed (`exitCode = null` for signal termination).
+Inspect the exit code rather than assuming all captured output means success.
+
+Edit a file with an exact unique replacement:
+
+```nix
+:edit change { path = "README.md"; old = "old text"; new = "new text"; }
+```
+
+Native batched `edits = [ { oldText = "..."; newText = "..."; } ];` is also
+accepted. The existing edit implementation supplies validation and diff output.
+Relative paths and shell commands use the session working directory.
+
+For other registered host capabilities:
+
+```nix
+:host children { type = "rlm.list_subagents"; }
+```
+
+`children` holds the result payload, not the `status/result` transport envelope.
+The legacy `:host { ... }` form remains available; `lastHostReply` retains the
+response envelope. Ordinary Nix functions cannot perform these host operations.
+Invalid target variable names are rejected before dispatching side effects.
+
+## Ordinary Nix
+
+```nix
+answer = 6 * 7
+```
+
+In another cell:
 
 ```nix
 answer
 ```
 
-In a flake repository, bind the flake explicitly (scope-loading REPL commands
-such as `:lf` are not supported by this adapter yet):
+Load a flake explicitly and inspect it:
 
 ```nix
 flake = builtins.getFlake (toString ./.)
 ```
 
-Then inspect a configuration (replace the host name for your flake):
-
 ```nix
 flake.nixosConfigurations.amd.config.networking.hostName
 ```
 
-A system build does not activate it:
+Native `:b` builds synchronously; it does not activate a system:
 
 ```nix
 :b flake.nixosConfigurations.amd.config.system.build.toplevel
 ```
 
-## Host operations
+## Cancellation and state
 
-The adapter adds `:host <Nix attribute set>` as an explicit host-call boundary.
-The attribute set is evaluated in the current Nix scope and encoded as JSON;
-the Rust host dispatches the request. The response envelope is bound to
-`lastHostReply`, so later Nix expressions can inspect it. This is not an ordinary Nix function and
-is not an upstream `nix repl` command.
+Interrupts propagate to the current evaluation or the host shell operation.
+Shutdown cleans up owned child processes. Cancellation cannot undo edits or
+side effects already completed; a process that deliberately escapes its process
+group is outside ordinary group cleanup. Native Nix builds are managed by the
+Nix daemon and may be shared with other clients.
 
-For example, list child agents:
+Bindings live in the persistent REPL. Restart recovery remains limited to safe
+scalar literal bindings; calculated values, functions, and host results may be
+lost and must be recreated. Checkpointing never replays commands or forces
+arbitrary lazy expressions. This change does not expand recovery guarantees.
 
-```nix
-:host { type = "rlm.list_subagents"; }
-```
+## Limitations and safety
 
-Only existing host request types are valid. A Python skill does not become
-available merely because this bridge exists. Use the fork's tool instructions
-for supported calls and response handling.
+- Unix process groups are required; Windows is not supported by this fork.
+- Each cell contains one expression, assignment, or supported colon command.
+- Evaluator output is parsed from the native REPL text protocol. A user trace
+  containing a newline followed by `error:` can be mistaken for an evaluator error.
+- Supported native commands are `:b`, `:p`, `:t`, `:doc`, `:?`, and `:help`.
+  Scope-loading commands and interactive shell/editor commands are not exposed.
+- Python skills and Python-kernel MCP clients are not available.
+- Captured shell stdout and stderr are each capped at 1 MiB. The result includes
+  `truncated`; when true, the stored text is not the complete output.
+- The REPL and host operations run with the user's permissions, not in a general
+  security sandbox. Nix build sandboxing does not isolate host shell commands.
+- No dependencies are installed into an external project automatically. Use its
+  normal environment (`nix develop`, etc.) for project commands.
 
-## State lifetime
+## Verification
 
-Bindings persist in the live Nix process. The experimental checkpoint only
-saves directly assigned JSON-compatible scalar literals, without forcing arbitrary
-lazy expressions or replaying commands. Functions, derivations, and calculated
-bindings can be skipped and will need to be recreated after a kernel restart.
-This deliberately avoids silently replaying builds or host-side effects.
-
-## Safety and reproducibility
-
-The REPL runs with the agent user's permissions. It is not a security sandbox.
-Nix build sandboxing does not isolate host shell execution, file access, or
-host requests. Review commands before deploying or activating a configuration.
-
-Pin flake inputs and keep source revisions when reproducibility matters. A live
-REPL binding is not automatically an immutable snapshot of the working tree.
-
-## Verification environment
-
-Initial implementation was exercised on Linux with Nix 2.34.8. The CLI is still
-versioned 0.10.0 like its upstream base; use the Git branch/commit to distinguish
-this fork. No system configuration activation is performed by setup or tests.
-
-## Test coverage and remaining upstream checks
-
-The real-Nix runtime suite, Rust-to-Nix kernel integration, prompt assembly, and
-CLI build/smoke checks are exercised separately. The complete upstream test
-suite is **not** a passing release gate for this prototype: its TS golden schema
-and Python wording fixtures still describe the intentionally replaced kernel.
-On this NixOS machine, shell golden fixtures also require `/bin/bash`, which
-is not present (the shell is `/run/current-system/sw/bin/bash`). Do not interpret focused tests as full upstream parity.
-
-## Validation commands
+Tests must exercise native executable startup, not a Python interpreter override.
+The implementation is tested with real Nix on Linux, including named binding reuse,
+Unicode and quoting, errors, shell/edit operations, cancellation and cleanup.
+For tests that launch a separately built runtime, set
+`PRIME_AGENT_NIX_RUNTIME="$PWD/target/debug/prime-agent"`. This points to a native
+executable, not a Python interpreter. The application itself defaults to its
+current executable.
 
 ```sh
-prime-agent-runtime/.venv/bin/python -m unittest discover \
-  -s prime-agent-runtime/test -p 'test_nix_repl.py' -v
+nix shell nixpkgs#gcc nixpkgs#pkg-config -c cargo test -p pa-core --lib kernel::nix_runtime --locked
+nix shell nixpkgs#gcc nixpkgs#pkg-config -c cargo test -p pa-core --lib tools::bash_local --locked
 nix shell nixpkgs#gcc nixpkgs#pkg-config -c env \
-  PRIME_AGENT_KERNEL_PYTHON="$PWD/prime-agent-runtime/.venv/bin/python" \
-  cargo test -p pa-core --test nix_kernel -- --ignored
-nix shell nixpkgs#gcc nixpkgs#pkg-config -c \
-  cargo test -p pa-core prompts::system_prompt --lib --locked
+  PRIME_AGENT_NIX_RUNTIME="$PWD/target/debug/prime-agent" \
+  cargo test -p pa-core --test nix_kernel --locked -- --ignored
 ```
 
-## Current limitations
-
-- Interrupting a `:host` cell stops waiting for its reply but does not cancel an
-  already running host shell command or undo an edit. Use the native shell
-  `timeout` parameter when needed; do not assume Ctrl-C killed the command.
-
-- Linux/macOS-style process groups are required; Windows is not supported by
-  this experimental adapter.
-- Each cell contains one expression, binding, or supported REPL command.
-- REPL/build output is buffered until completion and capped at 1,048,576
-  characters. Host shell execution returns its tool result through `lastHostReply`.
-- Scope-loading commands (`:lf`, `:l`, `:a`) and interactive shells/editors are
-  not exposed. Bind `builtins.getFlake` or `import` results explicitly instead.
-- Python skills and kernel-side MCP clients are unavailable.
-- Only directly assigned scalar literals are checkpointed; live calculated
-  values and functions do not survive a kernel restart.
-- This fork changes the tool contract; historical Python cells are not runnable
-  as Nix code.
-
-## Changed interfaces
-
-The model tool name changes from `python_repl` to `nix_repl`. It is the only
-exposed model tool; `tool.bash` and `tool.edit` are host request types, not
-additional model tools. Their replies expose `content`, `details`, and `isError`
-under `lastHostReply.result`. The runtime entry
-point changes from `rlm.repl` to `rlm.nix_repl`. Snapshot files are now
-`nix-kernel-state.json` and `nix-kernel-state-manifest.json`, separate from old
-Python/dill state. Wire protocol version remains 3. Existing Rust identifiers
-such as `PYTHON_TOOL_NAME` remain internal implementation names in this prototype.
-
-## Upstream compatibility
-
-This branch intentionally changes the upstream model tool and prompt contract.
-Upstream Python-kernel integration tests are not evidence that a Nix kernel
-works; real Nix runtime tests are required. Old Python session state is not a
-Nix checkpoint. Use a fresh session and a separate development kernel environment.
+The full upstream test suite still contains Python/TS golden expectations,
+Python-interpreter injection fixtures, and NixOS-incompatible `/bin/bash`
+assumptions. The native startup intentionally does not use `KernelManagerOptions.python`.
+Focused native tests are not a claim of complete upstream parity. The local
+strict Clippy gate also encounters upstream lint/toolchain mismatches in
+unmodified dependencies; no full-workspace lint pass is claimed.

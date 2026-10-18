@@ -1,20 +1,38 @@
 # prime-agent harness
 
-The core evaluation tool is `nix_repl`, a persistent Nix REPL. Submit Nix expressions, not Python. Bind intermediate values with `name = expression`, then refer to those names in later calls. Nix is lazy: binding an expression does not guarantee it has been evaluated.
+The only model-facing tool is `nix_repl`, a persistent Nix REPL managed by Rust.
+Submit Nix expressions, not Python. Bind intermediate values with `name = expression`
+and reuse them in later calls. Nix is lazy; a binding may not yet be evaluated.
 
-The only model-facing tool is `nix_repl`. Run shell commands and edit files through explicit host requests, not separate tools or Nix functions. Shell processes do not inherit REPL bindings. Run external projects through their own environment and normal command interface.
+## Synchronous shell and editing
+
+Use these adapter colon commands as complete cells. They are not ordinary Nix
+functions or upstream Nix REPL commands. There are no background task APIs.
 
 ```nix
-:host { type = "tool.bash"; command = "git status --short"; }
+:run result "git status --short"
+```
+
+The result is bound to `result` with `stdout`, `stderr`, `exitCode`, and `truncated` fields. If `truncated` is true, the stored output is incomplete (each stream is capped at 1 MiB).
+The display shows command output without the transport envelope. A nonzero exit
+still saves the result but reports failure. Use distinct names to retain multiple
+results. Arguments are evaluated in the live scope, so later commands can use
+previous values. Quote arbitrary shell arguments correctly.
+
+```nix
+:run checked { command = "git status --short"; timeout = 30; }
 ```
 
 ```nix
-:host { type = "tool.edit"; path = "README.md"; edits = [ { oldText = "old text"; newText = "new text"; } ]; }
+:edit change { path = "README.md"; old = "old text"; new = "new text"; }
 ```
 
-Interrupting a host call stops waiting, but does not cancel an already running shell command or undo edits. Use the shell `timeout` parameter where needed; never claim a command was killed merely because the REPL was interrupted.
+Edits require exact unique matches. Native `edits = [ { oldText = "...";
+newText = "..."; } ];` is also accepted. Relative paths resolve from the session
+working directory. Run projects through their documented environment.
 
-Host replies remain available as `lastHostReply`. For shell/edit calls, `lastHostReply.result.content` contains output blocks and `lastHostReply.result.isError` indicates a tool-level failure; inspect them before relying on success.
+Cancellation requests propagate to running shell operations; they do not undo
+completed file edits or other side effects. Read the actual cancellation result.
 
 ## Runtime boundaries
 
@@ -24,7 +42,7 @@ The Nix REPL is not a sandbox. Expressions may read files and access the Nix sto
 
 ## Host operations
 
-Use `:host <Nix attrset>` as a complete `nix_repl` cell to send a host request. The attrset is evaluated in the current Nix scope and converted to JSON. The response is printed as JSON and safely bound as `lastHostReply` using `builtins.fromJSON`. Inspect `lastHostReply.result` in later cells; copy any needed value to your own binding before the next host request overwrites it. This is an explicit command bridge, not a Nix function or Python API. Only operations registered by the current session are available; an unavailable operation returns an error.
+Use `:host name <Nix attrset>` as a complete cell to call a registered host operation and bind its result payload to `name`. The attrset is evaluated in the live Nix scope. Legacy `:host <Nix attrset>` remains available; `lastHostReply` holds the full response envelope. This is an explicit command bridge, not a Nix function or Python API. Only registered operations are available; errors must not be treated as success.
 
 Examples:
 
@@ -88,7 +106,7 @@ Omit `receiver_name` for parent messages. For child or sibling messages it is re
 
 ## State and cells
 
-Send one expression or assignment per cell; it may span multiple lines. Only the supported single-line REPL commands `:b`, `:p`, `:t`, `:doc`, `:?`, and `:help` are allowed in addition to `:host`. Shell and scope-loading REPL commands are not available.
+Send one expression or assignment per cell; it may span multiple lines. Only the supported single-line native commands `:b`, `:p`, `:t`, `:doc`, `:?`, and `:help` are allowed in addition to the adapter commands `:run`, `:edit`, and `:host`. Shell and scope-loading REPL commands are not available.
 
 Snapshot persistence is limited to direct scalar literal bindings. Other bindings are reported as skipped; their expressions are not replayed and lazy values are not forced merely to save a snapshot. A live REPL can retain more state than a resumed session. Read restoration notices before relying on old bindings.
 

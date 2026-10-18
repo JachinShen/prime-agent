@@ -328,7 +328,7 @@ pub struct KernelSnapshotConfig {
 /// Options for constructing a [`ReplKernelManager`].
 #[derive(Clone, Default)]
 pub struct KernelManagerOptions {
-    /// Python interpreter with the kernel runtime available. Defaults to the auto-bootstrapped kernel.
+    /// Legacy embedding field; native runtime launch uses PRIME_AGENT_NIX_RUNTIME instead.
     pub python: Option<std::path::PathBuf>,
     pub cwd: Option<std::path::PathBuf>,
     pub env: HashMap<String, String>,

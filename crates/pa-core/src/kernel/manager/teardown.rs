@@ -161,6 +161,10 @@ impl Inner {
             if let Some(timer) = lock(&self.snapshot_timer).take() {
                 timer.abort();
             }
+            for (_, task) in g.host_cancellations.drain() {
+                task.abort();
+            }
+            g.host_inflight.clear();
             g.late_handlers.clear();
             g.pending_done_waiters.clear();
             g.bash_activity_waiters.clear();

@@ -12,7 +12,7 @@
 > `feat/nix-repl-kernel`](https://github.com/JachinShen/prime-agent/tree/feat/nix-repl-kernel)
 > replaces the model-facing Python
 > execution kernel with a persistent `nix repl`. The application host remains
-> Rust, with a Python transport adapter. This is not upstream Prime Agent and
+> Rust, including the native Nix transport (no Python runtime required). This is not upstream Prime Agent and
 > does not provide Python-kernel feature parity. See [Nix kernel](docs/nix-kernel.md)
 > for setup, supported operations, and limitations. Upstream installers below
 > install upstream Prime Agent, **not this fork**.

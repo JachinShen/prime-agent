@@ -137,7 +137,7 @@ pub(crate) fn register_host_tool(
         crate::kernel::shared::host_handler(move |payload| {
             let definition = definition.clone();
             async move {
-                let mut params = payload.data;
+                let mut params = payload.data.get("kwargs").cloned().unwrap_or(payload.data);
                 if let Some(object) = params.as_object_mut() {
                     object.remove("type");
                 }
@@ -145,6 +145,9 @@ pub(crate) fn register_host_tool(
                     params = prepare(params);
                 }
                 let result = (definition.execute)(&definition.name, params, None, None).await?;
+                if definition.name == "run" {
+                    return Ok(result.details.unwrap_or_default());
+                }
                 Ok(serde_json::json!({
                     "content": result.content,
                     "details": result.details,
@@ -236,6 +239,177 @@ mod tests {
             std::fs::read_to_string(dir.path().join("example.txt")).unwrap(),
             "after"
         );
+    }
+
+    #[tokio::test]
+    async fn nix_run_captures_streams_and_nonzero_status() {
+        use crate::kernel::shared::{HostRequestHandlers, HostRequestPayload};
+        let dir = tempfile::tempdir().unwrap();
+        let mut handlers = HostRequestHandlers::new();
+        register_host_tool(
+            &mut handlers,
+            crate::tools::bash::create_run_tool_definition(
+                &dir.path().to_string_lossy(),
+                &crate::BashToolOptions::default(),
+            ),
+        );
+        let output = handlers.get("tool.run").unwrap()(HostRequestPayload {
+            data: serde_json::json!({"command":"printf hello; printf problem >&2; exit 7"}),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            output,
+            serde_json::json!({"stdout":"hello","stderr":"problem","exitCode":7,"truncated":false})
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires built native CLI in PRIME_AGENT_NIX_RUNTIME and nix on PATH"]
+    async fn native_nix_run_and_edit_round_trip() {
+        use crate::kernel::manager::KernelStartOptions;
+        use crate::kernel::shared::{
+            ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelManagerOptions,
+            KernelShutdownOptions,
+        };
+        std::env::var_os("PRIME_AGENT_NIX_RUNTIME").expect("set native CLI executable");
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_string_lossy();
+        let mut handlers = HostRequestHandlers::new();
+        register_host_tool(
+            &mut handlers,
+            crate::tools::bash::create_run_tool_definition(
+                &cwd,
+                &crate::BashToolOptions::default(),
+            ),
+        );
+        register_host_tool(&mut handlers, crate::create_edit_tool_definition(&cwd));
+        let mut manager = crate::kernel::ReplKernelManager::new(KernelManagerOptions {
+            cwd: Some(dir.path().to_path_buf()),
+            host_handlers: handlers.clone(),
+            ..Default::default()
+        });
+        manager.start(KernelStartOptions::default()).await.unwrap();
+        let run = manager
+            .execute(
+                r#":run result "printf before > sample; printf out; printf err >&2; exit 7""#,
+                ExecuteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(run.status, ExecuteStatus::Error, "{run:?}");
+        assert!(
+            run.error
+                .as_ref()
+                .is_some_and(|error| error.evalue.contains('7')),
+            "{run:?}"
+        );
+        let check = manager
+            .execute(":p (builtins.toJSON result)", ExecuteOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(check.result.as_deref().unwrap()).unwrap(),
+            serde_json::json!({"stdout":"out", "stderr":"err", "exitCode":7, "truncated":false})
+        );
+        let edit = manager
+            .execute(
+                r#":edit edited { path = "sample"; old = "before"; new = "after"; }"#,
+                ExecuteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(edit.status, ExecuteStatus::Ok, "{edit:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("sample")).unwrap(),
+            "after"
+        );
+        let signalled = manager
+            .execute(
+                r#":run signalled "kill -TERM $$""#,
+                ExecuteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(signalled.status, ExecuteStatus::Error, "{signalled:?}");
+        assert!(
+            signalled
+                .error
+                .as_ref()
+                .is_some_and(|error| error.evalue.contains("signal")),
+            "{signalled:?}"
+        );
+        let check = manager
+            .execute("signalled.exitCode", ExecuteOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(check.result.as_deref(), Some("null"));
+        for shutdown in [false, true] {
+            let signal = crate::kernel::AbortSignal::new();
+            let running = manager.clone();
+            let cell_signal = signal.clone();
+            let task = tokio::spawn(async move {
+                running
+                    .execute(
+                        r#":run pending "printf '%s' $$ > pid; exec sleep 300""#,
+                        ExecuteOptions {
+                            signal: Some(cell_signal),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+            });
+            let pid = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    if let Ok(text) = std::fs::read_to_string(dir.path().join("pid")) {
+                        if let Ok(pid) = text.parse::<i32>() {
+                            break pid;
+                        }
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("host command ready");
+            if shutdown {
+                manager
+                    .shutdown(KernelShutdownOptions::default())
+                    .await
+                    .unwrap();
+            } else {
+                signal.abort();
+            }
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+                .await
+                .unwrap()
+                .unwrap();
+            #[cfg(unix)]
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                while nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("host child killed and reaped");
+            std::fs::remove_file(dir.path().join("pid")).unwrap();
+            if shutdown {
+                manager = crate::kernel::ReplKernelManager::new(KernelManagerOptions {
+                    cwd: Some(dir.path().to_path_buf()),
+                    host_handlers: handlers.clone(),
+                    ..Default::default()
+                });
+                manager.start(KernelStartOptions::default()).await.unwrap();
+            }
+            let healthy = manager
+                .execute("6 * 7", ExecuteOptions::default())
+                .await
+                .unwrap();
+            assert_eq!(healthy.result.as_deref(), Some("42"), "{healthy:?}");
+        }
+        manager
+            .shutdown(KernelShutdownOptions::default())
+            .await
+            .unwrap();
     }
 
     fn shout_args(mut args: serde_json::Value) -> serde_json::Value {

@@ -56,6 +56,11 @@ impl Inner {
                 }
             }
             Event::HostRequest { id, data } => self.start_host_request(&id, data),
+            Event::HostCancel { id } => {
+                if let Some(task) = lock(&self.guarded).host_cancellations.remove(&id) {
+                    task.abort();
+                }
+            }
             Event::Stdout { id, text } => {
                 self.route_stream(id.as_deref(), StreamName::Stdout, &text);
             }

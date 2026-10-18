@@ -321,6 +321,7 @@ struct Guarded {
     /// never hold the execution queue a python cell needs).
     mcp_status_waiters: HashMap<String, oneshot::Sender<Value>>,
     host_inflight: Vec<tokio::task::JoinHandle<()>>,
+    host_cancellations: HashMap<String, tokio::task::AbortHandle>,
     active_execution: Option<Arc<ActiveExecution>>,
     ready_tx: Option<oneshot::Sender<anyhow::Result<i64>>>,
 }
@@ -351,7 +352,6 @@ impl std::fmt::Debug for ReplKernelManager {
 pub(crate) struct Inner {
     options: KernelManagerOptions,
     freshness_stat_probe: std::sync::atomic::AtomicBool,
-    resolved_python: Mutex<Option<std::path::PathBuf>>,
     guarded: Mutex<Guarded>,
     child: Mutex<Option<ChildHandle>>,
     busy_notify: Notify,
@@ -425,7 +425,6 @@ impl ReplKernelManager {
         let inner = Arc::new(Inner {
             options,
             freshness_stat_probe: std::sync::atomic::AtomicBool::new(false),
-            resolved_python: Mutex::new(None),
             guarded: Mutex::new(Guarded {
                 state: KernelState::Idle,
                 start_generation: 0,
@@ -457,6 +456,7 @@ impl ReplKernelManager {
                 factory_activity_waiters: HashMap::new(),
                 mcp_status_waiters: HashMap::new(),
                 host_inflight: Vec::new(),
+                host_cancellations: HashMap::new(),
                 active_execution: None,
                 ready_tx: None,
             }),

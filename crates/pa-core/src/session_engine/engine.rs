@@ -462,7 +462,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
         .map_err(|join| anyhow::anyhow!("websearch key resolve join failed: {join}"))?
     };
     for definition in [
-        crate::create_bash_tool_definition_with_options(
+        crate::tools::bash::create_run_tool_definition(
             &cwd.to_string_lossy(),
             &crate::BashToolOptions {
                 shell_path: kernel_shell_path

@@ -1,5 +1,4 @@
-//! Real Nix runtime integration. Run with PRIME_AGENT_KERNEL_PYTHON pointing at
-//! the runtime project's interpreter and nix available on PATH.
+//! Native Nix integration. Set PRIME_AGENT_NIX_RUNTIME to the built CLI, with nix on PATH.
 #![cfg(unix)]
 #![allow(clippy::large_futures)]
 
@@ -9,10 +8,10 @@ use pa_core::kernel::shared::{
 };
 
 #[tokio::test]
-#[ignore = "requires Nix and the local runtime Python environment"]
+#[ignore = "requires Nix and PRIME_AGENT_NIX_RUNTIME pointing at the native CLI"]
 async fn nix_bindings_survive_calls_and_errors() {
-    let _python = std::env::var_os("PRIME_AGENT_KERNEL_PYTHON")
-        .expect("set PRIME_AGENT_KERNEL_PYTHON to prime-agent-runtime/.venv/bin/python");
+    std::env::var_os("PRIME_AGENT_NIX_RUNTIME")
+        .expect("set PRIME_AGENT_NIX_RUNTIME to the built CLI");
     let mut handlers = pa_core::kernel::shared::HostRequestHandlers::new();
     handlers.register(
         "test.echo",
@@ -22,7 +21,7 @@ async fn nix_bindings_survive_calls_and_errors() {
     );
     let manager = ReplKernelManager::new(KernelManagerOptions {
         host_handlers: handlers,
-        // Resolve through the same bootstrap readiness path as a real session.
+        // Resolve the native executable through the same path as a real session.
         python: None,
         ..Default::default()
     });

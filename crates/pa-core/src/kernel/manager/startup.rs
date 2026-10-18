@@ -1,4 +1,4 @@
-//! Startup and child wiring: kernel process spawn, python resolution, stderr
+//! Startup and child wiring: native runtime process spawn, executable resolution, stderr
 //! capture, and readiness handshake.
 
 use super::{
@@ -97,36 +97,22 @@ impl Inner {
         })))
     }
 
-    /// The Python interpreter this kernel runs on: the explicit option when
-    /// present, else the auto-bootstrapped kernel venv.
-    async fn resolve_python(
-        self: &Arc<Self>,
-        options: &KernelStartOptions,
-    ) -> anyhow::Result<std::path::PathBuf> {
-        if let Some(python) = &self.options.python {
-            return Ok(python.clone());
+    /// Resolve the native runtime executable; tests may supply the built CLI explicitly.
+    fn resolve_runtime(&self) -> anyhow::Result<std::path::PathBuf> {
+        if let Some(path) = self.options.env.get("PRIME_AGENT_NIX_RUNTIME") {
+            return Ok(path.into());
         }
-        if let Some(cached) = lock(&self.resolved_python).clone() {
-            return Ok(cached);
+        if let Some(path) = std::env::var_os("PRIME_AGENT_NIX_RUNTIME") {
+            return Ok(path.into());
         }
-        let progress = options.on_bootstrap_progress.clone();
-        let skills = Vec::new();
-        let python = crate::kernel::bootstrap::ensure_kernel_python(
-            crate::kernel::bootstrap::EnsureKernelPythonOptions {
-                python_skills: skills,
-                on_progress: progress,
-            },
-        )
-        .await?;
-        *lock(&self.resolved_python) = Some(python.clone());
-        Ok(python)
+        Ok(std::env::current_exe()?)
     }
 
-    /// Perform the startup: resolve the interpreter, spawn `python -m rlm.repl`,
+    /// Perform the startup: resolve the executable, spawn the native Nix runtime,
     /// complete the protocol handshake, and mark the kernel running.
     pub(crate) async fn do_start(
         self: &Arc<Self>,
-        options: &KernelStartOptions,
+        _options: &KernelStartOptions,
     ) -> anyhow::Result<()> {
         {
             let mut g = lock(&self.guarded);
@@ -140,7 +126,7 @@ impl Inner {
         // kernel that is still booting.
         live_kernels::add(self);
 
-        let python = match self.resolve_python(options).await {
+        let python = match self.resolve_runtime() {
             Ok(python) => python,
             Err(error) => {
                 if self.start_stale(self.current_generation()) {
@@ -167,7 +153,7 @@ impl Inner {
         let cwd = self.options.cwd.clone();
         let mut command = tokio::process::Command::new(&python);
         command
-            .args(["-m", "rlm.nix_repl"])
+            .arg("--prime-agent-nix-runtime")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -196,7 +182,7 @@ impl Inner {
                 }
                 self.cleanup_resources(Signal::Term);
                 return Err(anyhow!(
-                    "failed to spawn kernel python {}: {error}",
+                    "failed to spawn native Nix runtime {}: {error}",
                     python.display()
                 ));
             }
@@ -245,7 +231,7 @@ impl Inner {
             crate::kernel::bootstrap::invalidate_runtime_probe_cache();
             return Err(anyhow!(
                 "Kernel runtime speaks protocol {protocol}, expected {REPL_PROTOCOL_VERSION}. \
-                 Update prime-agent-runtime in the kernel Python (PRIME_AGENT_KERNEL_PYTHON) to match this prime-agent."
+                 Use a native Nix runtime executable matching this prime-agent."
             ));
         }
         {

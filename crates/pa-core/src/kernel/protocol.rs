@@ -130,6 +130,9 @@ pub enum Event {
         id: String,
         data: Value,
     },
+    HostCancel {
+        id: String,
+    },
     Error {
         id: Option<String>,
         ename: String,
@@ -152,6 +155,7 @@ impl Event {
             Event::Result { .. } => "result",
             Event::Display { .. } => "display",
             Event::HostRequest { .. } => "host_request",
+            Event::HostCancel { .. } => "host_cancel",
             Event::Error { .. } => "error",
             Event::Done { .. } => "done",
         }
@@ -193,7 +197,15 @@ pub fn parse_event(line: &str) -> Result<Event, String> {
         .ok_or_else(|| format!("unknown protocol event: {}", clip(line)))?;
     let known = matches!(
         kind,
-        "ready" | "stdout" | "stderr" | "result" | "display" | "host_request" | "error" | "done"
+        "ready"
+            | "stdout"
+            | "stderr"
+            | "result"
+            | "display"
+            | "host_request"
+            | "host_cancel"
+            | "error"
+            | "done"
     );
     if !known {
         return Err(format!("unknown protocol event: {}", clip(line)));
@@ -227,6 +239,9 @@ pub fn parse_event(line: &str) -> Result<Event, String> {
             Ok(Event::Result { id, text })
         }
         "display" => Ok(Event::Display { id: id("id"), data }),
+        "host_cancel" => Ok(Event::HostCancel {
+            id: id("id").ok_or_else(|| format!("host_cancel frame without id: {}", clip(line)))?,
+        }),
         "host_request" => {
             let rid =
                 id("id").ok_or_else(|| format!("host_request frame without id: {}", clip(line)))?;

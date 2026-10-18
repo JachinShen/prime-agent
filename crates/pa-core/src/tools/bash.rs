@@ -547,6 +547,86 @@ pub fn create_bash_tool_definition_with_options(
     }
 }
 
+/// Foreground Nix host command: structured streams and status, with the same git guard.
+pub(crate) fn create_run_tool_definition(cwd: &str, options: &BashToolOptions) -> ToolDefinition {
+    let mut definition = create_bash_tool_definition_with_options(cwd, options);
+    definition.name = "run".to_string();
+    let cwd = cwd.to_string();
+    let shell_path = options.shell_path.clone();
+    let command_prefix = options.command_prefix.clone();
+    definition.execute = Arc::new(move |_id, params, signal, _on_update| {
+        let cwd = cwd.clone();
+        let capture = Arc::new(Mutex::new(crate::tools::bash_local::RunCapture::default()));
+        let options = BashToolOptions {
+            operations: Some(Arc::new(
+                crate::tools::bash_local::CapturingBashOperations {
+                    shell_path: shell_path.clone(),
+                    capture: capture.clone(),
+                },
+            )),
+            command_prefix: command_prefix.clone(),
+            ..Default::default()
+        };
+        Box::pin(async move {
+            let command = params
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("tool.run requires a command string"))?;
+            let timeout = match params.get("timeout") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(
+                    value
+                        .as_f64()
+                        .filter(|t| t.is_finite() && *t > 0.0)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("timeout must be a positive number of seconds")
+                        })?,
+                ),
+            };
+            let result = execute_bash(
+                &cwd,
+                &options,
+                command,
+                timeout,
+                params
+                    .get("allowDestructiveGit")
+                    .and_then(serde_json::Value::as_bool),
+                signal,
+                None,
+            )
+            .await;
+            let capture = capture.lock().unwrap();
+            if let Err(error) = &result {
+                let is_nonzero_exit = capture.exit_code.flatten().is_some_and(|code| {
+                    code != 0
+                        && error
+                            .to_string()
+                            .ends_with(&format!("Command exited with code {code}"))
+                });
+                if !is_nonzero_exit {
+                    return Err(anyhow::anyhow!("{error}"));
+                }
+            }
+            // A nonzero exit is data; guard, spawn, timeout and cancellation remain errors.
+            let Some(exit_code) = capture.exit_code else {
+                result?;
+                anyhow::bail!("command did not return an exit status");
+            };
+            Ok(ToolExecutionResult {
+                content: Vec::new(),
+                details: Some(json!({
+                    "stdout": String::from_utf8_lossy(&capture.stdout),
+                    "stderr": String::from_utf8_lossy(&capture.stderr),
+                    "exitCode": exit_code,
+                    "truncated": capture.truncated,
+                })),
+                is_error: false,
+            })
+        })
+    });
+    definition
+}
+
 /// Refusal text for discard commands whose target repository cannot be
 /// resolved safely (TS: `formatRelocationRefusal`).
 const RELOCATION_REFUSAL: &str = "Refusing to run this destructive git command: it changes directory (or repository) first, and the uncommitted changes of the repository it targets cannot be checked safely.\n\nRun the discard as its own command from the target directory, or retry with allowDestructiveGit: true, or set PI_BASH_ALLOW_DESTRUCTIVE_GIT=1.";

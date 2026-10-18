@@ -343,14 +343,14 @@ pub fn ipython_tool_schema() -> serde_json::Value {
         "properties": {
             "code": {
                 "type": "string",
-                "description": "Nix expressions, bindings, or supported REPL commands. Use :host with type = \"tool.bash\" for shell commands or type = \"tool.edit\" for file changes."
+                "description": "Nix expressions, bindings, or REPL commands: :run NAME command, :edit NAME { path; old; new; }, :host NAME { type; ...; }."
             }
         }
     })
 }
 
 pub fn ipython_tool_description() -> &'static str {
-    "Evaluate Nix expressions and bindings in a persistent real nix repl. Bindings survive calls; directly assigned literal values are restored best-effort on resume. Python and top-level await are not supported. Use :host { type = \"tool.bash\"; command = \"...\"; } for shell commands and :host { type = \"tool.edit\"; path = \"...\"; edits = [ { oldText = \"...\"; newText = \"...\"; } ]; } for exact file edits. Host APIs use :host followed by a Nix attribute set."
+    "Evaluate Nix expressions and bindings in a persistent native Nix REPL. Bindings survive calls; snapshots restore JSON-compatible values best-effort. Python and top-level await are not supported. Use :run result \"command\" (or { command = \"...\"; timeout = 30; }) for synchronous shell commands; result contains stdout, stderr, exitCode and truncated (streams capped at 1 MiB each). Use :edit result { path = \"file\"; old = \"before\"; new = \"after\"; } for exact file edits. Use :host result { type = \"goal.get\"; } for other host APIs. Named results bind into the Nix namespace. No background task interface is exposed."
 }
 
 #[tracing::instrument(

@@ -12,6 +12,9 @@ impl Inner {
     pub(crate) fn start_host_request(self: &Arc<Self>, request_id: &str, data: Value) {
         {
             let mut g = lock(&self.guarded);
+            if g.state == super::KernelState::Shutdown {
+                return;
+            }
             let (seen, order) = &mut g.handled_host_request_ids;
             if seen.contains(request_id) {
                 return;
@@ -28,8 +31,19 @@ impl Inner {
         }
         let inner = Arc::clone(self);
         let request_id = request_id.to_string();
+        let cancellation_id = request_id.clone();
+        let transport = lock(&self.child).as_ref().map(|child| child.stdin.clone());
+        let mut g = lock(&self.guarded);
+        let computation_inner = inner.clone();
+        let computation =
+            tokio::spawn(async move { computation_inner.handle_host_request(&data).await });
+        let abort = computation.abort_handle();
         let task = tokio::spawn(async move {
-            let result = inner.handle_host_request(&data).await;
+            let result = match computation.await {
+                Ok(result) => result,
+                Err(error) => Err(anyhow!("host request cancelled or failed: {error}")),
+            };
+            lock(&inner.guarded).host_cancellations.remove(&request_id);
             let reply = match result {
                 Ok(result) => json!({ "status": "ok", "result": result }),
                 Err(error) => {
@@ -40,15 +54,31 @@ impl Inner {
                 }
             };
             let frame = json!({ "type": "host_reply", "id": request_id, "data": reply });
-            if let Err(error) = inner.write_line(&frame).await {
+            let Some(transport) = transport else {
+                return;
+            };
+            let send = async {
+                use tokio::io::AsyncWriteExt;
+                let mut stdin = transport.lock().await;
+                let stdin = stdin.as_mut().ok_or_else(|| anyhow!("kernel closed"))?;
+                stdin.write_all(format!("{frame}\n").as_bytes()).await?;
+                stdin.flush().await?;
+                Ok::<(), anyhow::Error>(())
+            };
+            if let Err(error) = send.await {
                 inner.append_diagnostic(&format!(
                     "failed to send host request reply for {request_id}: {error:#}"
                 ));
             }
         });
-        let mut g = lock(&self.guarded);
         // Completed task handles are dropped so the inflight set stays bounded.
         g.host_inflight.retain(|handle| !handle.is_finished());
+        g.host_cancellations
+            .retain(|_, handle| !handle.is_finished());
+        if g.state == super::KernelState::Shutdown {
+            abort.abort();
+        }
+        g.host_cancellations.insert(cancellation_id, abort);
         g.host_inflight.push(task);
     }
 

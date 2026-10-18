@@ -87,6 +87,17 @@ pub fn main_with_runtime(args: &[String], runtime: &dyn mode::Runtime) -> i32 {
 fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String> {
     use std::io::IsTerminal;
 
+    if args.len() == 1 && args[0] == "--prime-agent-nix-runtime" {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())?;
+        runtime
+            .block_on(pa_core::kernel::nix_runtime::serve_nix_runtime())
+            .map_err(|error| format!("{error:#}"))?;
+        return Ok(0);
+    }
+
     // Telemetry reports the version `--version` prints: the beta channel
     // restamps only the packaged manifest, never the compiled-in version.
     pa_telemetry::set_version(crate::config::version());
@@ -104,7 +115,8 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     // Install-time kernel preparation: the installer invokes `--prime-agent-bootstrap`
     // after extracting a release, so the venv is ready before the first session.
     if args.len() == 1 && args[0] == "--prime-agent-bootstrap" {
-        return run_runtime_bootstrap();
+        run_runtime_bootstrap();
+        return Ok(0);
     }
 
     // Public command routing: help requests, removed commands, management
@@ -320,22 +332,9 @@ fn main_impl(args: &[String], runtime: &dyn mode::Runtime) -> Result<i32, String
     }
 }
 
-/// Prepare the kernel runtime at install time: resolve or bootstrap the kernel
-/// Python and print its path. Failures print the error and exit 1.
-fn run_runtime_bootstrap() -> Result<i32, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| error.to_string())?;
-    match runtime.block_on(pa_core::kernel::ensure_kernel_python(
-        pa_core::kernel::EnsureKernelPythonOptions::default(),
-    )) {
-        Ok(python) => {
-            println!("kernel python: {}", python.display());
-            Ok(0)
-        }
-        Err(error) => Err(format!("{error:#}")),
-    }
+/// Native runtime needs no Python environment provisioning.
+fn run_runtime_bootstrap() {
+    println!("kernel runtime: native Nix (nix must be on PATH)");
 }
 
 /// Run the daemon session-worker runtime (the process the supervisor spawns

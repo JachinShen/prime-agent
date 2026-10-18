@@ -8,6 +8,7 @@ pub mod bootstrap;
 pub mod cancellation;
 pub mod live_kernels;
 pub mod manager;
+pub mod nix_runtime;
 pub mod orphan_journal;
 pub mod protocol;
 pub mod provisioner;
