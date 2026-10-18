@@ -19,6 +19,8 @@ pub struct LocalBashOperations {
 pub(crate) struct CapturingBashOperations {
     pub shell_path: Option<String>,
     pub capture: Arc<std::sync::Mutex<RunCapture>>,
+    pub argv: Option<Vec<String>>,
+    pub stdin: Option<String>,
 }
 
 #[derive(Default)]
@@ -45,7 +47,15 @@ impl BashOperations for LocalBashOperations {
         cwd: &'a str,
         options: ExecOptions<'a>,
     ) -> ExecFuture<'a> {
-        exec_local(self.shell_path.clone(), None, command, cwd, options)
+        exec_local(
+            self.shell_path.clone(),
+            None,
+            None,
+            None,
+            command,
+            cwd,
+            options,
+        )
     }
 }
 
@@ -59,6 +69,8 @@ impl BashOperations for CapturingBashOperations {
         exec_local(
             self.shell_path.clone(),
             Some(self.capture.clone()),
+            self.argv.as_deref(),
+            self.stdin.as_deref(),
             command,
             cwd,
             options,
@@ -70,6 +82,8 @@ impl BashOperations for CapturingBashOperations {
 fn exec_local<'a>(
     shell_path: Option<String>,
     capture: Option<Arc<std::sync::Mutex<RunCapture>>>,
+    argv: Option<&'a [String]>,
+    stdin: Option<&'a str>,
     command: &'a str,
     cwd: &'a str,
     options: ExecOptions<'a>,
@@ -86,20 +100,28 @@ fn exec_local<'a>(
         if let Some(capture) = &capture {
             *capture.lock().unwrap() = RunCapture::default();
         }
-        let shell = get_shell_config(shell_path.as_deref())?;
 
         if !std::path::Path::new(cwd).exists() {
             anyhow::bail!("Working directory does not exist: {cwd}\nCannot execute bash commands.");
         }
 
-        let mut process = std::process::Command::new(&shell.shell);
-        for arg in &shell.args {
-            process.arg(arg);
-        }
+        let mut process = if let Some(argv) = argv {
+            let mut process = std::process::Command::new(&argv[0]);
+            process.args(&argv[1..]);
+            process
+        } else {
+            let shell = get_shell_config(shell_path.as_deref())?;
+            let mut process = std::process::Command::new(&shell.shell);
+            process.args(&shell.args).arg(command);
+            process
+        };
         process
-            .arg(command)
             .current_dir(cwd)
-            .stdin(std::process::Stdio::null())
+            .stdin(if stdin.is_some() {
+                std::process::Stdio::piped()
+            } else {
+                std::process::Stdio::null()
+            })
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         for (key, value) in env.unwrap_or_else(get_shell_env) {
@@ -125,6 +147,26 @@ fn exec_local<'a>(
         let _process_guard = ProcessGroupGuard(group.clone());
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
+        let (stdin_tx, mut stdin_rx) = tokio::sync::oneshot::channel();
+        if let Some(input) = stdin {
+            let input = input.to_owned();
+            let mut pipe = child.stdin.take().expect("piped stdin");
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let result = pipe.write_all(input.as_bytes()).or_else(|error| {
+                    if error.kind() == std::io::ErrorKind::BrokenPipe {
+                        Ok(())
+                    } else {
+                        Err(error)
+                    }
+                });
+                drop(pipe);
+                let _ = stdin_tx.send(result);
+            });
+        } else {
+            let _ = stdin_tx.send(Ok(()));
+        }
+        let mut stdin_complete = false;
 
         // Chunks from both pipes flow through one channel preserving arrival
         // order, like node's stream events.
@@ -232,6 +274,10 @@ fn exec_local<'a>(
         let exit_status: std::io::Result<std::process::ExitStatus> = 'wait: {
             loop {
                 tokio::select! {
+                    result = &mut stdin_rx, if !stdin_complete => {
+                        result??;
+                        stdin_complete = true;
+                    }
                     status = &mut waiter => {
                         break 'wait status?;
                     }
@@ -280,6 +326,23 @@ fn exec_local<'a>(
             }
         }
 
+        if !stdin_complete {
+            tokio::select! {
+                result = &mut stdin_rx => { result??; }
+                () = async {
+                    match &signal {
+                        Some(signal) => signal.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                } => anyhow::bail!("aborted"),
+                () = async {
+                    match timeout_deadline {
+                        Some(deadline) => tokio::time::sleep_until(deadline).await,
+                        None => std::future::pending().await,
+                    }
+                } => anyhow::bail!("timeout:{}", timeout.unwrap_or_default()),
+            }
+        }
         let status = exit_status.map_err(|err| anyhow::anyhow!("{err}"))?;
 
         if let Some(signal) = &signal {
@@ -300,6 +363,38 @@ fn exec_local<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelling_with_blocked_stdin_finishes() {
+        let signal = tokio_util::sync::CancellationToken::new();
+        let ops = CapturingBashOperations {
+            shell_path: None,
+            capture: Arc::new(std::sync::Mutex::new(RunCapture::default())),
+            argv: Some(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "printf ready; exec sleep 300".to_string(),
+            ]),
+            stdin: Some("x".repeat(2 * 1024 * 1024)),
+        };
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            ops.exec(
+                "unused",
+                "/tmp",
+                ExecOptions {
+                    on_data: &|_| signal.cancel(),
+                    signal: Some(signal.clone()),
+                    timeout: None,
+                    env: None,
+                },
+            ),
+        )
+        .await
+        .expect("cancellation must release blocked stdin");
+        assert_eq!(result.unwrap_err().to_string(), "aborted");
+    }
 
     #[tokio::test]
     async fn cancelled_before_spawn_has_no_side_effect() {

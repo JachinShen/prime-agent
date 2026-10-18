@@ -179,7 +179,6 @@ pub(super) fn signal(pid: u32, signal: nix::sys::signal::Signal) {
 #[cfg(test)]
 mod interrupt_tests {
     use super::*;
-    use std::os::fd::AsFd;
     use std::time::Duration;
 
     #[tokio::test]
@@ -187,20 +186,23 @@ mod interrupt_tests {
         let pid = Arc::new(AtomicU32::new(0));
         let mut evaluator = Evaluator::start(&pid).await.unwrap();
         for _ in 0..3 {
-            // A duplicate socket observes readiness without stealing bytes from the
-            // framing reader. Startup has drained the socket; the next bytes are
-            // the trace emitted immediately before entering the expensive fold.
-            let fd = evaluator.output.as_fd().try_clone_to_owned().unwrap();
-            let socket = std::os::unix::net::UnixStream::from(fd);
-            socket.set_nonblocking(true).unwrap();
-            let observer = tokio::net::UnixStream::from_std(socket).unwrap();
-            let interrupt = async {
-                observer.readable().await.unwrap();
+            // Read this evaluation's unique trace before sending SIGINT. Socket
+            // readability alone can be a trailing newline from the previous fence.
+            // No framing reader is active yet, so readiness bytes cannot be stolen.
+            let marker = format!("interrupt_ready_{}", uuid::Uuid::new_v4().simple());
+            let source = format!(
+                "builtins.trace {} (builtins.foldl' (a: b: a + b) 0 (builtins.genList (x: x) 10000000))\n",
+                string(&marker)
+            );
+            let result = tokio::time::timeout(Duration::from_secs(15), async {
+                evaluator.input.write_all(source.as_bytes()).await.unwrap();
+                evaluator.input.flush().await.unwrap();
+                let mut observed = Vec::new();
+                while !observed.ends_with(marker.as_bytes()) {
+                    observed.push(evaluator.output.read_u8().await.unwrap());
+                }
                 signal(pid.load(Ordering::SeqCst), nix::sys::signal::Signal::SIGINT);
-            };
-            let evaluate = evaluator.evaluate("builtins.trace \"interrupt-ready\" (builtins.foldl' (a: b: a + b) 0 (builtins.genList (x: x) 10000000))");
-            let ((), result) = tokio::time::timeout(Duration::from_secs(15), async {
-                tokio::join!(biased; interrupt, evaluate)
+                evaluator.evaluate("null").await
             })
             .await
             .expect("SIGINT must settle the evaluator and its fence");

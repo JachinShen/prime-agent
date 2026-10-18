@@ -189,3 +189,64 @@ async fn named_host_results_reuse_and_failed_commands_bind_before_error() {
     );
     evaluator.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn write_binds_metadata_and_preserves_binding_on_failure() {
+    use super::runtime::{execute, Control};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::sync::{mpsc, Mutex};
+
+    let pid = Arc::new(AtomicU32::new(0));
+    let mut evaluator = Evaluator::start(&pid).await.unwrap();
+    let control = Control {
+        pid: AtomicU32::new(pid.load(Ordering::SeqCst)),
+        interrupted: AtomicBool::new(false),
+        changed: tokio::sync::Notify::new(),
+        host: Mutex::new(None),
+        requests: std::sync::Mutex::default(),
+    };
+    let output = Arc::new(Mutex::new(tokio::io::stdout()));
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    for (host_reply, succeeds) in [
+        (
+            json!({"status":"ok","result":{"path":"/tmp/new.txt","bytes":6}}),
+            true,
+        ),
+        (json!({"status":"error","error":"File exists"}), false),
+    ] {
+        let operation = execute(
+            &mut evaluator,
+            r#":write created { path = "new.txt"; text = "中文"; }"#,
+            &control,
+            &output,
+            &mut rx,
+        );
+        let reply = async {
+            loop {
+                if let Some(id) = control.host.lock().await.clone() {
+                    tx.send(json!({"id":id,"data":host_reply})).unwrap();
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        };
+        let (result, ()) = tokio::join!(operation, reply);
+        if succeeds {
+            assert_eq!(
+                result.unwrap(),
+                json!({"output":"Created /tmp/new.txt (6 bytes)"})
+            );
+        } else {
+            assert!(result.is_err());
+        }
+        let bound = evaluator
+            .evaluate(":p (builtins.toJSON created)")
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&bound).unwrap(),
+            json!({"path":"/tmp/new.txt","bytes":6})
+        );
+    }
+    evaluator.close().await.unwrap();
+}

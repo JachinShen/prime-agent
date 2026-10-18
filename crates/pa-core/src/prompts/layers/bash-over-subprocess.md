@@ -1,1 +1,1 @@
-Use `nix_repl` with `:run result "command"` for synchronous shell commands. Results are Nix attributes (`stdout`, `stderr`, `exitCode`). Do not write Python subprocess code or call `bash()` inside Nix expressions.
+Use `nix_repl` with `:run result { argv = [ "program" "argument" ]; cwd = project; }` for synchronous programs. Use `command` for shell pipelines, `stdin` for input text, `:write` for new files, and `:edit` for existing files. Results are Nix attributes (`stdout`, `stderr`, `exitCode`). Do not write Python subprocess code or call `bash()` inside Nix expressions.

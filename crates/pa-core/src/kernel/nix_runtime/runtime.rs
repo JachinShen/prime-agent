@@ -213,7 +213,7 @@ pub(super) async fn execute(
         return Ok(json!({}));
     }
     let (command, rest) = code.split_once(char::is_whitespace).unwrap_or((code, ""));
-    if matches!(command, ":run" | ":edit" | ":host") {
+    if matches!(command, ":run" | ":edit" | ":write" | ":host") {
         let rest = rest.trim();
         let legacy = command == ":host" && rest.starts_with('{');
         let (name, expression) = if legacy {
@@ -253,10 +253,10 @@ pub(super) async fn execute(
             }
         }
         if command != ":host" {
-            data["type"] = json!(if command == ":run" {
-                "tool.run"
-            } else {
-                "tool.edit"
+            data["type"] = json!(match command {
+                ":run" => "tool.run",
+                ":write" => "tool.write",
+                _ => "tool.edit",
             });
         }
         let rid = uuid::Uuid::new_v4().to_string();
@@ -298,6 +298,15 @@ pub(super) async fn execute(
                 _ => bail!("Invalid command exit status"),
             }
             return Ok(json!({"output":format!("{stdout}{stderr}")}));
+        }
+        if command == ":write" {
+            let path = value["path"]
+                .as_str()
+                .context("Invalid write result path")?;
+            let bytes = value["bytes"]
+                .as_u64()
+                .context("Invalid write result bytes")?;
+            return Ok(json!({"output":format!("Created {path} ({bytes} bytes)")}));
         }
         Ok(
             json!({"output":if command == ":edit" { value.get("details").and_then(|details| details.get("diff")).or_else(|| value.get("output")).and_then(Value::as_str).unwrap_or("Edit completed").to_string() } else { serde_json::to_string(value)? }}),

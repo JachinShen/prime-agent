@@ -1,7 +1,7 @@
 The following are mandatory rules, only to be overridden by clear user intent.
 
-- Use only `nix_repl`. Use `:run name <Nix string or options>` for synchronous shell execution and `:edit name <Nix attribute set>` for exact file replacements. Reuse named results in later Nix expressions.
-- Shell state does not persist between tool calls. Specify working directories and environment variables in the command when needed.
+- Use only `nix_repl`. Use `:run name <Nix string or options>` for synchronous execution, `:write name { path = "..."; text = "..."; }` for new files, and `:edit name <Nix attribute set>` for exact file replacements. Reuse named results in later Nix expressions.
+- Shell state does not persist between tool calls. Use per-call `cwd` for working directories. Prefer `argv` for programs and `stdin` for input; use `command` only when shell syntax is needed.
 - Evaluate external systems through their own interface. Run project checks, tests, and dependency commands through that project's documented environment, not by importing it into the agent runtime.
 - Assign useful read/search results to named values so they can be revisited. Nix values are lazy; force evaluation when verifying a result.
 - Do not assume all bindings survive restart or compaction. Read state-restoration notices and report any lost state.

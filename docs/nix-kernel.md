@@ -42,12 +42,14 @@ result.exitCode
 Multiple named results coexist. Later commands may use earlier values:
 
 ```nix
-:run next ("printf '%s' " + pkgs.lib.escapeShellArg result.stdout)
+:run next { argv = [ "printf" "%s" result.stdout ]; }
 ```
 
-The composition example assumes `pkgs` is a bound nixpkgs package set. Use
-`pkgs.lib.escapeShellArg` for arbitrary shell arguments; do not concatenate
-unescaped output into shell code.
+`argv` executes a program directly, without a shell or argument expansion.
+Prefer it for ordinary programs; use `command` for pipes and redirects.
+Exactly one of `argv` and `command` is required. `argv` must be a nonempty list
+of strings. A configured shell command prefix cannot be combined with `argv`;
+use `command` for that case. Do not concatenate unescaped output into shell code.
 
 Command options are a Nix attribute set:
 
@@ -58,6 +60,36 @@ Command options are a Nix attribute set:
 A nonzero exit or signal termination preserves the structured result and reports
 the call as failed (`exitCode = null` for signal termination).
 Inspect the exit code rather than assuming all captured output means success.
+
+Per-call `cwd` resolves relative to the session directory, without changing
+later calls. Optional `stdin` supplies UTF-8 text and closes the input stream:
+
+```nix
+:run checked { cwd = project; argv = [ "cargo" "test" "--offline" ]; }
+```
+
+```nix
+:run checked { cwd = project; argv = [ "./target/debug/app" ]; stdin = sample; }
+```
+
+Create a new file without shell heredocs:
+
+```nix
+:write source {
+  path = project + "/main.rs";
+  text = ''
+    fn main() {
+        println!("hello");
+    }
+  '';
+}
+```
+
+`:write` refuses existing paths, including symlinks. Parent directories must
+exist. Its result contains the path and number of UTF-8 bytes written. Use
+`:edit` for existing files, not a write-with-overwrite option. Nix indented
+strings still interpolate `${expression}`: write `''${` for a literal `${`
+and `'''` for literal `''`. Double-quoted strings use `\${` for literal `${`.
 
 Edit a file with an exact unique replacement:
 

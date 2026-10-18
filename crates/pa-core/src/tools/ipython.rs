@@ -248,11 +248,23 @@ fn format_execute_text(result: &ExecuteResult, background_output: Option<&str>) 
         text.push_str(if text.is_empty() { "" } else { "\n" });
         text.push_str(result_text);
     }
-    if result.status == ExecuteStatus::Error {
-        if let Some(error) = &result.error {
-            text.push_str(if text.is_empty() { "" } else { "\n" });
-            text.push_str(&error.traceback.join("\n"));
-        }
+    if matches!(result.status, ExecuteStatus::Error | ExecuteStatus::Aborted) {
+        let error_text = result.error.as_ref().map_or_else(
+            || match result.status {
+                ExecuteStatus::Aborted => "Tool execution aborted".to_string(),
+                ExecuteStatus::Error => "Nix execution failed".to_string(),
+                ExecuteStatus::Ok => unreachable!(),
+            },
+            |error| {
+                if error.traceback.is_empty() {
+                    format!("{}: {}", error.ename, error.evalue)
+                } else {
+                    error.traceback.join("\n")
+                }
+            },
+        );
+        text.push_str(if text.is_empty() { "" } else { "\n" });
+        text.push_str(&error_text);
     }
     if let Some(background) = background_output {
         let separator = if text.is_empty() { "" } else { "\n" };
@@ -343,14 +355,14 @@ pub fn ipython_tool_schema() -> serde_json::Value {
         "properties": {
             "code": {
                 "type": "string",
-                "description": "Nix expressions, bindings, or REPL commands: :run NAME command, :edit NAME { path; old; new; }, :host NAME { type; ...; }."
+                "description": "Nix expressions, bindings, or REPL commands: :run NAME command or { command or argv; cwd; stdin; timeout; }, :write NAME { path; text; }, :edit NAME { path; old; new; }, :host NAME { type; ...; }."
             }
         }
     })
 }
 
 pub fn ipython_tool_description() -> &'static str {
-    "Evaluate Nix expressions and bindings in a persistent native Nix REPL. Bindings survive calls; snapshots restore JSON-compatible values best-effort. Python and top-level await are not supported. Use :run result \"command\" (or { command = \"...\"; timeout = 30; }) for synchronous shell commands; result contains stdout, stderr, exitCode and truncated (streams capped at 1 MiB each). Use :edit result { path = \"file\"; old = \"before\"; new = \"after\"; } for exact file edits. Use :host result { type = \"goal.get\"; } for other host APIs. Named results bind into the Nix namespace. No background task interface is exposed."
+    "Evaluate Nix expressions and bindings in a persistent native Nix REPL. Bindings survive calls; snapshots restore JSON-compatible values best-effort. Python and top-level await are not supported. Use :run result \"command\" or { command = \"...\"; timeout = 30; } for synchronous shell commands. For direct execution without a shell, use { argv = [ \"program\" \"arg\" ]; }. Both forms accept optional cwd and stdin strings; command and argv are mutually exclusive. The result contains stdout, stderr, exitCode and truncated (streams capped at 1 MiB each). Use :write result { path = \"new-file\"; text = \"content\"; } to create a UTF-8 file; existing paths are rejected and parent directories must exist. Its result contains path and bytes. Use :edit result { path = \"file\"; old = \"before\"; new = \"after\"; } for exact file edits. Use :host result { type = \"goal.get\"; } for other host APIs. Named results bind into the Nix namespace. No background task interface is exposed."
 }
 
 #[tracing::instrument(
@@ -533,6 +545,38 @@ pub fn create_ipython_tool_definition(_cwd: &str, options: IpythonToolOptions) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn errors_without_tracebacks_remain_visible() {
+        let mut result = ExecuteResult {
+            status: ExecuteStatus::Error,
+            error: Some(KernelErrorInfo {
+                ename: "NixError".to_string(),
+                evalue: "undefined variable missing".to_string(),
+                traceback: Vec::new(),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            format_execute_text(&result, None),
+            "NixError: undefined variable missing"
+        );
+        result.stdout = "before failure".to_string();
+        result.error.as_mut().unwrap().traceback = vec!["full trace".to_string()];
+        assert_eq!(
+            format_execute_text(&result, None),
+            "before failure\nfull trace"
+        );
+        result.error = None;
+        result.status = ExecuteStatus::Aborted;
+        assert_eq!(
+            format_execute_text(&result, None),
+            "before failure\nTool execution aborted"
+        );
+        result.stdout.clear();
+        result.status = ExecuteStatus::Error;
+        assert_eq!(format_execute_text(&result, None), "Nix execution failed");
+    }
 
     #[test]
     fn sent_agent_message_json_matches_ts_wire_shape() {

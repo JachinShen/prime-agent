@@ -4,35 +4,72 @@ The only model-facing tool is `nix_repl`, a persistent Nix REPL managed by Rust.
 Submit Nix expressions, not Python. Bind intermediate values with `name = expression`
 and reuse them in later calls. Nix is lazy; a binding may not yet be evaluated.
 
-## Synchronous shell and editing
+## Synchronous commands and files
 
 Use these adapter colon commands as complete cells. They are not ordinary Nix
 functions or upstream Nix REPL commands. There are no background task APIs.
+
+Prefer `argv` for programs: it runs directly without shell expansion. Use `cwd`
+instead of concatenating `cd`, and `stdin` instead of an `echo` or `printf`
+pipeline. `argv` and `command` are mutually exclusive.
+
+```nix
+:run checked { cwd = project; argv = [ "cargo" "test" "--offline" ]; timeout = 120; }
+```
+
+```nix
+:run checked { cwd = project; argv = [ "./target/debug/app" ]; stdin = sample; }
+```
+
+Use `command` when shell syntax such as pipes or redirects is needed. The short
+string form still runs a shell command:
 
 ```nix
 :run result "git status --short"
 ```
 
-The result is bound to `result` with `stdout`, `stderr`, `exitCode`, and `truncated` fields. If `truncated` is true, the stored output is incomplete (each stream is capped at 1 MiB).
-The display shows command output without the transport envelope. A nonzero exit
-still saves the result but reports failure. Use distinct names to retain multiple
-results. Arguments are evaluated in the live scope, so later commands can use
-previous values. Quote arbitrary shell arguments correctly.
-
 ```nix
-:run checked { command = "git status --short"; timeout = 30; }
+:run matches { cwd = project; command = "rg -n 'cancel' src | head -40"; }
 ```
 
+The result has `stdout`, `stderr`, `exitCode`, and `truncated` fields. Each stream
+is capped at 1 MiB. A nonzero exit or signal termination reports failure but
+still binds the result; signal termination has `exitCode = null`. Read the error
+shown in the tool response. Use distinct names to retain multiple results.
+Arguments use the live scope, so later commands can reuse earlier values.
+Output remains unmodified; remove trailing newlines only when needed.
+
+Create new files with `:write`, not shell heredocs. Existing files are refused;
+parent directories must already exist. Prefer Nix indented strings for source
+code and other multiline text:
+
 ```nix
-:edit change { path = "README.md"; old = "old text"; new = "new text"; }
+:write source {
+  path = project + "/main.rs";
+  text = ''
+    fn main() {
+        println!("hello");
+    }
+  '';
+}
 ```
 
-Edits require exact unique matches. Native `edits = [ { oldText = "...";
-newText = "..."; } ];` is also accepted. Relative paths resolve from the session
-working directory. Run projects through their documented environment.
+Nix strings still interpolate `${expression}`. In indented strings, write
+`''${` for a literal `${`, and `'''` for literal `''`. In double-quoted strings,
+escape a literal interpolation opener as `\${`.
 
-Cancellation requests propagate to running shell operations; they do not undo
-completed file edits or other side effects. Read the actual cancellation result.
+Modify existing files with exact unique replacements:
+
+```nix
+:edit change { path = project + "/main.rs"; old = "hello"; new = "world"; }
+```
+
+Native `edits = [ { oldText = "..."; newText = "..."; } ];` is also accepted.
+Relative paths and relative `cwd` resolve from the session working directory;
+`cwd` affects one run only. Run projects through their documented environment.
+
+Cancellation stops running operations but does not undo completed writes or
+other side effects. Read the actual cancellation result.
 
 ## Runtime boundaries
 
@@ -106,7 +143,7 @@ Omit `receiver_name` for parent messages. For child or sibling messages it is re
 
 ## State and cells
 
-Send one expression or assignment per cell; it may span multiple lines. Only the supported single-line native commands `:b`, `:p`, `:t`, `:doc`, `:?`, and `:help` are allowed in addition to the adapter commands `:run`, `:edit`, and `:host`. Shell and scope-loading REPL commands are not available.
+Send one expression or assignment per cell; it may span multiple lines. Only the supported single-line native commands `:b`, `:p`, `:t`, `:doc`, `:?`, and `:help` are allowed in addition to the adapter commands `:run`, `:write`, `:edit`, and `:host`. Shell and scope-loading REPL commands are not available.
 
 Snapshot persistence is limited to direct scalar literal bindings. Other bindings are reported as skipped; their expressions are not replayed and lazy values are not forced merely to save a snapshot. A live REPL can retain more state than a resumed session. Read restoration notices before relying on old bindings.
 

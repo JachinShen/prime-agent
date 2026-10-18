@@ -233,51 +233,30 @@ fn append_status(text: &str, status: &str) -> String {
     }
 }
 
-/// Execute one bash tool call. Errors carry the model-facing text.
-#[tracing::instrument(
-    level = "debug",
-    name = "tool_bash_execute",
-    skip(cwd, options, on_update)
-    fields(command),
-)]
-pub async fn execute_bash(
-    cwd: &str,
+async fn check_destructive_git(
+    ops: &dyn BashOperations,
+    resolved_command: &str,
+    context: &BashSpawnContext,
     options: &BashToolOptions,
-    command: &str,
-    timeout: Option<f64>,
     allow_destructive_git: Option<bool>,
     signal: Option<AbortSignal>,
-    on_update: Option<OnUpdate>,
-) -> anyhow::Result<ToolExecutionResult> {
-    let default_ops;
-    let ops: &dyn BashOperations = if let Some(ops) = &options.operations {
-        ops.as_ref()
-    } else {
-        default_ops = LocalBashOperations {
-            shell_path: options.shell_path.clone(),
-        };
-        &default_ops
-    };
+    timeout: Option<f64>,
+) -> anyhow::Result<()> {
+    let cwd = context.cwd.as_str();
+    let env = &context.env;
     let command_prefix = options.command_prefix.as_deref();
     let spawn_hook = options.spawn_hook.as_ref();
-
-    let resolved_command = match command_prefix {
-        Some(prefix) => format!("{prefix}\n{command}"),
-        None => command.to_string(),
-    };
-    let spawn_context = resolve_spawn_context(&resolved_command, cwd, spawn_hook);
-
     // Refuse destructive git discard commands while the tree is dirty.
-    let discard_indices = find_destructive_git_discard_commands(&resolved_command);
+    let discard_indices = find_destructive_git_discard_commands(resolved_command);
     if !discard_indices.is_empty()
         && allow_destructive_git != Some(true)
-        && !is_truthy_env_value(spawn_context.env.get(BASH_DESTRUCTIVE_GIT_BYPASS_ENV))
+        && !is_truthy_env_value(env.get(BASH_DESTRUCTIVE_GIT_BYPASS_ENV))
     {
         let mut probes: Vec<(BashSpawnContext, bool)> = Vec::new();
         let mut seen_probes: HashSet<String> = HashSet::new();
         let user_command_start = command_prefix.map_or(0, |p| p.len() + 1);
         for index in discard_indices {
-            let target = resolve_discard_probe_target(&resolved_command, index, user_command_start);
+            let target = resolve_discard_probe_target(resolved_command, index, user_command_start);
             match target {
                 DiscardProbeResolution::Unresolvable => {
                     anyhow::bail!("{RELOCATION_REFUSAL}");
@@ -327,6 +306,58 @@ pub async fn execute_bash(
             }
         }
     }
+
+    Ok(())
+}
+
+/// Execute one bash tool call. Errors carry the model-facing text.
+#[tracing::instrument(
+    level = "debug",
+    name = "tool_bash_execute",
+    skip(cwd, options, on_update)
+    fields(command),
+)]
+pub async fn execute_bash(
+    cwd: &str,
+    options: &BashToolOptions,
+    command: &str,
+    timeout: Option<f64>,
+    allow_destructive_git: Option<bool>,
+    signal: Option<AbortSignal>,
+    on_update: Option<OnUpdate>,
+) -> anyhow::Result<ToolExecutionResult> {
+    let default_ops;
+    let ops: &dyn BashOperations = if let Some(ops) = &options.operations {
+        ops.as_ref()
+    } else {
+        default_ops = LocalBashOperations {
+            shell_path: options.shell_path.clone(),
+        };
+        &default_ops
+    };
+    let command_prefix = options.command_prefix.as_deref();
+    let spawn_hook = options.spawn_hook.as_ref();
+
+    let resolved_command = match command_prefix {
+        Some(prefix) => format!("{prefix}\n{command}"),
+        None => command.to_string(),
+    };
+    let spawn_context = resolve_spawn_context(&resolved_command, cwd, spawn_hook);
+
+    check_destructive_git(
+        ops,
+        &resolved_command,
+        &BashSpawnContext {
+            command: resolved_command.clone(),
+            cwd: cwd.to_string(),
+            env: spawn_context.env.clone(),
+        },
+        options,
+        allow_destructive_git,
+        signal.clone(),
+        timeout,
+    )
+    .await?;
 
     let acc = Arc::new(Mutex::new(OutputAccumulator::new(
         &OutputAccumulatorOptions {
@@ -551,67 +582,87 @@ pub fn create_bash_tool_definition_with_options(
 pub(crate) fn create_run_tool_definition(cwd: &str, options: &BashToolOptions) -> ToolDefinition {
     let mut definition = create_bash_tool_definition_with_options(cwd, options);
     definition.name = "run".to_string();
+    definition.parameters = json!({
+        "type": "object",
+        "oneOf": [{"required": ["command"]}, {"required": ["argv"]}],
+        "properties": {
+            "command": {"type": "string"},
+            "argv": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+            "cwd": {"type": "string"},
+            "stdin": {"type": "string"},
+            "timeout": {"type": "number", "exclusiveMinimum": 0},
+            "allowDestructiveGit": {"type": "boolean"}
+        }
+    });
     let cwd = cwd.to_string();
     let shell_path = options.shell_path.clone();
     let command_prefix = options.command_prefix.clone();
     definition.execute = Arc::new(move |_id, params, signal, _on_update| {
-        let cwd = cwd.clone();
-        let capture = Arc::new(Mutex::new(crate::tools::bash_local::RunCapture::default()));
-        let options = BashToolOptions {
-            operations: Some(Arc::new(
-                crate::tools::bash_local::CapturingBashOperations {
-                    shell_path: shell_path.clone(),
-                    capture: capture.clone(),
-                },
-            )),
-            command_prefix: command_prefix.clone(),
-            ..Default::default()
-        };
+        let session_cwd = cwd.clone();
+        let shell_path = shell_path.clone();
+        let command_prefix = command_prefix.clone();
         Box::pin(async move {
-            let command = params
-                .get("command")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("tool.run requires a command string"))?;
-            let timeout = match params.get("timeout") {
-                None | Some(serde_json::Value::Null) => None,
-                Some(value) => Some(
-                    value
-                        .as_f64()
-                        .filter(|t| t.is_finite() && *t > 0.0)
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("timeout must be a positive number of seconds")
-                        })?,
-                ),
-            };
-            let result = execute_bash(
-                &cwd,
-                &options,
-                command,
-                timeout,
-                params
-                    .get("allowDestructiveGit")
-                    .and_then(serde_json::Value::as_bool),
-                signal,
-                None,
-            )
-            .await;
-            let capture = capture.lock().unwrap();
-            if let Err(error) = &result {
-                let is_nonzero_exit = capture.exit_code.flatten().is_some_and(|code| {
-                    code != 0
-                        && error
-                            .to_string()
-                            .ends_with(&format!("Command exited with code {code}"))
-                });
-                if !is_nonzero_exit {
-                    return Err(anyhow::anyhow!("{error}"));
-                }
+            let request = RunRequest::parse(&params, &session_cwd)?;
+            if request.argv.is_some() && command_prefix.is_some() {
+                anyhow::bail!("tool.run argv cannot be combined with a configured command prefix");
             }
-            // A nonzero exit is data; guard, spawn, timeout and cancellation remain errors.
-            let Some(exit_code) = capture.exit_code else {
-                result?;
-                anyhow::bail!("command did not return an exit status");
+            let command = match &command_prefix {
+                Some(prefix) => format!("{prefix}\n{}", request.command),
+                None => request.command,
             };
+            let capture = Arc::new(Mutex::new(crate::tools::bash_local::RunCapture::default()));
+            let ops = crate::tools::bash_local::CapturingBashOperations {
+                shell_path: shell_path.clone(),
+                capture: capture.clone(),
+                argv: request.argv,
+                stdin: request.stdin,
+            };
+            let options = BashToolOptions {
+                shell_path,
+                command_prefix,
+                ..Default::default()
+            };
+            let env = get_shell_env();
+            let allow = params
+                .get("allowDestructiveGit")
+                .and_then(serde_json::Value::as_bool);
+            // Probes must never inherit the user's argv or stdin.
+            let probe_ops = LocalBashOperations {
+                shell_path: options.shell_path.clone(),
+            };
+            if request.ambiguous_guard
+                && allow != Some(true)
+                && !is_truthy_env_value(env.get(BASH_DESTRUCTIVE_GIT_BYPASS_ENV))
+            {
+                anyhow::bail!("{RELOCATION_REFUSAL}");
+            }
+            check_destructive_git(
+                &probe_ops,
+                &command,
+                &BashSpawnContext {
+                    command: command.clone(),
+                    cwd: request.cwd.clone(),
+                    env: env.clone(),
+                },
+                &options,
+                allow,
+                signal.clone(),
+                request.timeout,
+            )
+            .await?;
+            let exit_code = ops
+                .exec(
+                    &command,
+                    &request.cwd,
+                    ExecOptions {
+                        on_data: &|_| {},
+                        signal,
+                        timeout: request.timeout,
+                        env: Some(env),
+                    },
+                )
+                .await?;
+            let capture = capture.lock().unwrap();
             Ok(ToolExecutionResult {
                 content: Vec::new(),
                 details: Some(json!({
@@ -625,6 +676,259 @@ pub(crate) fn create_run_tool_definition(cwd: &str, options: &BashToolOptions) -
         })
     });
     definition
+}
+
+struct RunRequest {
+    command: String,
+    argv: Option<Vec<String>>,
+    cwd: String,
+    stdin: Option<String>,
+    timeout: Option<f64>,
+    ambiguous_guard: bool,
+}
+
+impl RunRequest {
+    fn parse(params: &serde_json::Value, session_cwd: &str) -> anyhow::Result<Self> {
+        let mut ambiguous_guard = false;
+        let (command, argv) = match (params.get("command"), params.get("argv")) {
+            (Some(command), None) => (
+                command
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("command must be a string"))?
+                    .to_string(),
+                None,
+            ),
+            (None, Some(argv)) => {
+                let argv: Vec<String> = argv
+                    .as_array()
+                    .ok_or_else(|| anyhow::anyhow!("argv must be a nonempty array of strings"))?
+                    .iter()
+                    .map(|arg| {
+                        arg.as_str()
+                            .map(str::to_string)
+                            .ok_or_else(|| anyhow::anyhow!("argv entries must be strings"))
+                    })
+                    .collect::<anyhow::Result<_>>()?;
+                if argv.first().is_none_or(String::is_empty) {
+                    anyhow::bail!("argv must contain a nonempty executable");
+                }
+                // This representation is only for the shell-oriented git guard, never execution.
+                let mut guard_argv = argv.clone();
+                if std::path::Path::new(&guard_argv[0])
+                    .file_name()
+                    .is_some_and(|name| name == "git")
+                {
+                    guard_argv[0] = "git".to_string();
+                }
+                let command = guard_argv
+                    .iter()
+                    .map(|arg| {
+                        if !arg.is_empty()
+                            && arg
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"_./:=+-".contains(&b))
+                        {
+                            arg.clone()
+                        } else {
+                            format!("'{}'", arg.replace('\'', "'\\''"))
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                ambiguous_guard = guard_argv[0] == "git"
+                    && !find_destructive_git_discard_commands(&guard_argv.join(" ")).is_empty()
+                    && find_destructive_git_discard_commands(&command).is_empty();
+                (command, Some(argv))
+            }
+            _ => anyhow::bail!("tool.run requires exactly one of command or argv"),
+        };
+        let cwd = match params.get("cwd") {
+            None => std::path::PathBuf::from(session_cwd),
+            Some(value) => std::path::Path::new(session_cwd).join(
+                value
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("cwd must be a string"))?,
+            ),
+        }
+        .to_string_lossy()
+        .into_owned();
+        let stdin = params
+            .get("stdin")
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| anyhow::anyhow!("stdin must be a string"))
+            })
+            .transpose()?;
+        let timeout = match params.get("timeout") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => Some(
+                value
+                    .as_f64()
+                    .filter(|t| t.is_finite() && *t > 0.0)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("timeout must be a positive number of seconds")
+                    })?,
+            ),
+        };
+        Ok(Self {
+            command,
+            argv,
+            cwd,
+            stdin,
+            timeout,
+            ambiguous_guard,
+        })
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+
+    #[test]
+    fn validates_run_arguments_and_resolves_cwd() {
+        for params in [
+            json!({}),
+            json!({"command": "pwd", "argv": ["pwd"]}),
+            json!({"argv": []}),
+            json!({"argv": [""]}),
+            json!({"argv": [1]}),
+            json!({"command": null}),
+            json!({"command": "pwd", "cwd": 1}),
+            json!({"command": "pwd", "stdin": null}),
+            json!({"command": "pwd", "timeout": 0}),
+        ] {
+            assert!(RunRequest::parse(&params, "/tmp").is_err(), "{params}");
+        }
+        let request = RunRequest::parse(
+            &json!({"argv": ["printf", "%s", "$HOME; touch nope"], "cwd": "sub", "stdin": ""}),
+            "/tmp",
+        )
+        .unwrap();
+        assert_eq!(request.cwd, "/tmp/sub");
+        assert_eq!(request.stdin, Some(String::new()));
+        assert_eq!(
+            RunRequest::parse(&json!({"command": "pwd", "cwd": "/"}), "/tmp")
+                .unwrap()
+                .cwd,
+            "/"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn argv_is_literal_and_cwd_is_session_relative() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let tool =
+            create_run_tool_definition(&dir.path().to_string_lossy(), &BashToolOptions::default());
+        let result = (tool.execute)(
+            "test",
+            json!({"argv": ["printf", "%s", "$(touch nope);$HOME"], "cwd": "sub"}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result.details.unwrap(),
+            json!({"stdout": "$(touch nope);$HOME", "stderr": "", "exitCode": 0, "truncated": false})
+        );
+        assert!(!dir.path().join("sub/nope").exists());
+        let result = (tool.execute)(
+            "test",
+            json!({"argv": ["printf", "%s", "git reset --hard"]}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.details.unwrap()["stdout"], "git reset --hard");
+        let result = (tool.execute)("test", json!({"argv": ["pwd"], "cwd": "sub"}), None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            result.details.unwrap()["stdout"],
+            format!("{}\n", dir.path().join("sub").display())
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stdin_is_written_while_both_output_streams_are_drained() {
+        let tool = create_run_tool_definition("/tmp", &BashToolOptions::default());
+        let input = "x".repeat(2 * 1024 * 1024);
+        let result = (tool.execute)("test", json!({
+            "argv": ["sh", "-c", "head -c 2097152 /dev/zero; head -c 2097152 /dev/zero >&2; wc -c > /dev/null"],
+            "stdin": input, "timeout": 10
+        }), None, None).await.unwrap();
+        let details = result.details.unwrap();
+        assert_eq!(details["stdout"].as_str().unwrap().len(), 1024 * 1024);
+        assert_eq!(details["stderr"].as_str().unwrap().len(), 1024 * 1024);
+        assert_eq!(details["exitCode"], 0);
+        assert_eq!(details["truncated"], true);
+        let result = (tool.execute)(
+            "test",
+            json!({"command": "cat", "stdin": "hello", "timeout": 5}),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result.details.unwrap(),
+            json!({"stdout": "hello", "stderr": "", "exitCode": 0, "truncated": false})
+        );
+        let result = (tool.execute)("test", json!({"argv": ["cat"], "timeout": 5}), None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            result.details.unwrap(),
+            json!({"stdout": "", "stderr": "", "exitCode": 0, "truncated": false})
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn argv_nonzero_signal_and_broken_stdin_are_results() {
+        let tool = create_run_tool_definition("/tmp", &BashToolOptions::default());
+        for (script, status) in [("exit 7", json!(7)), ("kill -TERM $$", json!(null))] {
+            let result = (tool.execute)("test", json!({"argv": ["sh", "-c", script], "stdin": "x".repeat(1024 * 1024), "timeout": 5}), None, None).await.unwrap();
+            assert_eq!(
+                result.details.unwrap(),
+                json!({"stdout": "", "stderr": "", "exitCode": status, "truncated": false})
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn argv_git_guard_checks_the_requested_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        assert!(std::process::Command::new("git")
+            .arg("init")
+            .arg(&repo)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        std::fs::write(repo.join("keep"), "untracked").unwrap();
+        let tool =
+            create_run_tool_definition(&dir.path().to_string_lossy(), &BashToolOptions::default());
+        let result = (tool.execute)(
+            "test",
+            json!({"argv": ["git", "clean", "-fd"], "cwd": "repo"}),
+            None,
+            None,
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("Refusing"));
+        assert!(repo.join("keep").exists());
+    }
 }
 
 /// Refusal text for discard commands whose target repository cannot be

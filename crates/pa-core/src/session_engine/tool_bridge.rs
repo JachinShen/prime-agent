@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use pa_agent::abort::AbortSignal;
 use pa_agent::types::{
-    AgentTool, AgentToolResult, AgentToolUpdateCallback,
+    AgentTool, AgentToolError, AgentToolResult, AgentToolUpdateCallback,
     ToolExecutionMode as LoopToolExecutionMode, ToolResultContent,
 };
 
@@ -109,12 +109,15 @@ impl AgentTool for ToolDefinitionBridge {
                 f(&tool_call_id, params, Some(abort), tool_on_update).await?;
             let details = result.details.clone().unwrap_or(serde_json::Value::Null);
             let is_error = result.is_error;
-            let _ = is_error;
-            Ok(AgentToolResult {
+            let result = AgentToolResult {
                 content: convert_content(result),
                 details,
                 terminate: None,
-            })
+            };
+            if is_error {
+                return Err(AgentToolError(result).into());
+            }
+            Ok(result)
         })
     }
 
@@ -145,7 +148,7 @@ pub(crate) fn register_host_tool(
                     params = prepare(params);
                 }
                 let result = (definition.execute)(&definition.name, params, None, None).await?;
-                if definition.name == "run" {
+                if matches!(definition.name.as_str(), "run" | "write") {
                     return Ok(result.details.unwrap_or_default());
                 }
                 Ok(serde_json::json!({
@@ -412,6 +415,96 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    #[ignore = "requires built native CLI in PRIME_AGENT_NIX_RUNTIME and nix on PATH"]
+    async fn native_nix_write_and_direct_run_round_trip() {
+        use crate::kernel::manager::KernelStartOptions;
+        use crate::kernel::shared::{
+            ExecuteOptions, ExecuteStatus, HostRequestHandlers, KernelManagerOptions,
+            KernelShutdownOptions,
+        };
+        std::env::var_os("PRIME_AGENT_NIX_RUNTIME").expect("set native CLI executable");
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_string_lossy();
+        std::fs::create_dir(dir.path().join("space dir")).unwrap();
+        let mut handlers = HostRequestHandlers::new();
+        register_host_tool(
+            &mut handlers,
+            crate::tools::bash::create_run_tool_definition(
+                &cwd,
+                &crate::BashToolOptions::default(),
+            ),
+        );
+        register_host_tool(
+            &mut handlers,
+            crate::tools::write::create_write_tool_definition(&cwd),
+        );
+        register_host_tool(&mut handlers, crate::create_edit_tool_definition(&cwd));
+        let manager = crate::kernel::ReplKernelManager::new(KernelManagerOptions {
+            cwd: Some(dir.path().to_path_buf()),
+            host_handlers: handlers,
+            ..Default::default()
+        });
+        manager.start(KernelStartOptions::default()).await.unwrap();
+        let write = manager
+            .execute(
+                r#":write created { path = "space dir/input.txt"; text = "hello 🌸\n"; }"#,
+                ExecuteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(write.status, ExecuteStatus::Ok, "{write:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("space dir/input.txt")).unwrap(),
+            "hello 🌸\n"
+        );
+        let duplicate = manager
+            .execute(
+                r#":write duplicate { path = "space dir/input.txt"; text = "overwrite"; }"#,
+                ExecuteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicate.status, ExecuteStatus::Error, "{duplicate:?}");
+        let run = manager
+            .execute(
+                r#":run read { cwd = "space dir"; argv = [ "cat" "input.txt" ]; }"#,
+                ExecuteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(run.status, ExecuteStatus::Ok, "{run:?}");
+        let input = manager
+            .execute(
+                r#":run echoed { argv = [ "cat" ]; stdin = read.stdout; }"#,
+                ExecuteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(input.result.as_deref(), Some("hello 🌸\n"));
+        let literal = manager
+            .execute(
+                r#":run literal { argv = [ "printf" "%s" "$(touch SHOULD_NOT_EXIST)" ]; }"#,
+                ExecuteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(literal.result.as_deref(), Some("$(touch SHOULD_NOT_EXIST)"));
+        assert!(!dir.path().join("SHOULD_NOT_EXIST").exists());
+        let invalid = manager.execute(r#":run invalid { argv = [ "touch" "SHOULD_NOT_EXIST" ]; command = "touch SHOULD_NOT_EXIST"; }"#, ExecuteOptions::default()).await.unwrap();
+        assert_eq!(invalid.status, ExecuteStatus::Error);
+        assert!(!dir.path().join("SHOULD_NOT_EXIST").exists());
+        let healthy = manager
+            .execute("6 * 7", ExecuteOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(healthy.result.as_deref(), Some("42"));
+        manager
+            .shutdown(KernelShutdownOptions::default())
+            .await
+            .unwrap();
+    }
+
     fn shout_args(mut args: serde_json::Value) -> serde_json::Value {
         if let Some(text) = args.get("text").and_then(|t| t.as_str()) {
             args["text"] = serde_json::json!(text.to_uppercase());
@@ -535,6 +628,40 @@ mod tests {
             assert!(!tool.accepts_alias(name));
         }
         assert_eq!(tool.name(), "nix_repl");
+    }
+
+    #[tokio::test]
+    async fn structured_failures_preserve_content_and_details() {
+        let mut definition = echo_definition(false);
+        definition.execute = Arc::new(|_id, _params, _signal, _on_update| {
+            Box::pin(async {
+                Ok(ToolExecutionResult {
+                    content: vec![crate::tools::tool_definition::ToolContentBlock::text(
+                        "cell failed",
+                    )],
+                    details: Some(serde_json::json!({"status": "error", "executionCount": 3})),
+                    is_error: true,
+                })
+            })
+        });
+        let error = bridge_tool(definition)
+            .execute(
+                "failed-cell".to_string(),
+                serde_json::json!({}),
+                AbortSignal::default(),
+                Arc::new(|_result| {}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "cell failed");
+        assert_eq!(
+            error.downcast_ref::<AgentToolError>().unwrap().0,
+            AgentToolResult {
+                content: vec![ToolResultContent::text("cell failed")],
+                details: serde_json::json!({"status": "error", "executionCount": 3}),
+                terminate: None,
+            }
+        );
     }
 
     #[tokio::test]

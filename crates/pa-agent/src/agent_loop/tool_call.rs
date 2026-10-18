@@ -226,6 +226,8 @@ pub(crate) async fn execute_prepared_tool_call(
 fn error_tool_result(signal: Option<&AbortSignal>, error: &anyhow::Error) -> AgentToolResult {
     if signal.is_some_and(AbortSignal::is_aborted) {
         AgentToolResult::error("Tool execution aborted")
+    } else if let Some(error) = error.downcast_ref::<crate::types::AgentToolError>() {
+        error.0.clone()
     } else {
         AgentToolResult::error(format!("{error:#}"))
     }
@@ -334,4 +336,71 @@ pub(crate) async fn emit_tool_result_message(
         message: AgentMessage::from(tool_result_message.clone()),
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{AgentToolError, ToolResultContent};
+
+    struct FailedTool {
+        parameters: serde_json::Value,
+        result: AgentToolResult,
+    }
+
+    impl AgentTool for FailedTool {
+        fn name(&self) -> &str {
+            "failed"
+        }
+        fn description(&self) -> &str {
+            "Structured failure"
+        }
+        fn parameters(&self) -> &serde_json::Value {
+            &self.parameters
+        }
+        fn execute(
+            self: Arc<Self>,
+            _tool_call_id: String,
+            _params: serde_json::Value,
+            _signal: AbortSignal,
+            _on_update: AgentToolUpdateCallback,
+        ) -> crate::BoxFut<'static, anyhow::Result<AgentToolResult>> {
+            Box::pin(async move { Err(AgentToolError(self.result.clone()).into()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_failure_reaches_the_tool_result_as_an_error() {
+        let result = AgentToolResult {
+            content: vec![ToolResultContent::text("evaluation failed")],
+            details: serde_json::json!({"status": "error", "executionCount": 4}),
+            terminate: None,
+        };
+        let tool_call = ToolCall {
+            id: "call-1".into(),
+            name: "failed".into(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        };
+        let prepared = PreparedToolCall {
+            tool_call: tool_call.clone(),
+            tool: Arc::new(FailedTool {
+                parameters: serde_json::json!({"type": "object"}),
+                result: result.clone(),
+            }),
+            args: tool_call.arguments.clone(),
+        };
+        let emit: AgentEventSink = Arc::new(|_| Box::pin(async { Ok(()) }));
+        let executed = execute_prepared_tool_call(&prepared, None, &emit).await;
+        assert!(executed.is_error);
+        assert_eq!(executed.result, result);
+        let message = create_tool_result_message(&FinalizedToolCallOutcome {
+            tool_call,
+            result: executed.result,
+            is_error: executed.is_error,
+        });
+        assert!(message.is_error);
+        assert_eq!(message.content, result.content);
+        assert_eq!(message.details, Some(result.details));
+    }
 }

@@ -473,6 +473,7 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             },
         ),
         crate::create_edit_tool_definition(&cwd.to_string_lossy()),
+        crate::tools::write::create_write_tool_definition(&cwd.to_string_lossy()),
     ] {
         super::tool_bridge::register_host_tool(&mut handlers, definition);
     }

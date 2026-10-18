@@ -480,6 +480,27 @@ impl AgentToolResult {
     }
 }
 
+/// A tool failure carrying structured output for the loop's error result.
+/// Return this through `anyhow::Error` to preserve content and details while
+/// marking the tool execution as failed.
+#[derive(Debug)]
+pub struct AgentToolError(pub AgentToolResult);
+
+impl std::fmt::Display for AgentToolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut separator = "";
+        for block in &self.0.content {
+            if let ToolResultContent::Text(text) = block {
+                write!(f, "{separator}{}", text.text)?;
+                separator = "\n";
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for AgentToolError {}
+
 /// Callback used by tools to publish partial execution updates.
 pub type AgentToolUpdateCallback = Arc<dyn Fn(AgentToolResult) + Send + Sync>;
 
