@@ -71,6 +71,42 @@ Relative paths and relative `cwd` resolve from the session working directory;
 Cancellation stops running operations but does not undo completed writes or
 other side effects. Read the actual cancellation result.
 
+## Reuse ordinary Nix functions
+
+The Nix REPL starts without a preconfigured project environment or package set.
+Configure the required environment explicitly for the task; do not assume a
+compiler, `pkgs`, or a project devShell is already available. Missing project
+dependencies are an environment setup requirement, not a REPL failure.
+
+When several commands share a directory and an already chosen environment,
+reuse a pure Nix function rather than repeating options or adding new commands.
+Here `project` and `shellArgs` are bindings you have explicitly configured;
+`shellArgs` is an argv prefix, or `[]` when no wrapper is needed:
+
+```nix
+inProject = args: { cwd = project; argv = shellArgs ++ args; }
+```
+
+```nix
+:run tests (inProject [ "cargo" "test" "--offline" ])
+```
+
+```nix
+:run sample ((inProject [ "./target/debug/app" ]) // { stdin = sampleText; })
+```
+
+Only define helpers when they remove actual repetition. For line-oriented
+command output, this pure helper removes one final LF without deleting embedded
+newlines or changing the original result:
+
+```nix
+chomp = s: let n = builtins.stringLength s; in if n > 0 && builtins.substring (n - 1) 1 s == "\n" then builtins.substring 0 (n - 1) s else s
+```
+
+```nix
+project = chomp temp.stdout
+```
+
 ## Runtime boundaries
 
 There are no Python imports, top-level `await`, Python `bash()` handles, or pre-imported Python skills in this REPL. Do not call Python APIs such as `rlm.spawn`, `mcp.call_tool`, `goal.complete`, or `attach_image` as Nix functions. Python skill packages and the Python MCP client are not available in Nix. Host-side CLI commands remain separate from the REPL.
