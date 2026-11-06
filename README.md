@@ -54,6 +54,9 @@ irm https://app.primeintellect.ai/prime-agent/install.ps1 | iex
 
 The Windows installer downloads the latest stable Windows x64 build and verifies its checksum before installation.
 
+For the personal Nix build, including NixOS and Home Manager integration, see
+[Personal releases with Nix](docs/nix.md).
+
 ## Why Prime Agent
 
 Prime Agent combines a persistent Python control environment with durable harness state, so useful working context and reusable operating patterns can outlive a single chat window.
