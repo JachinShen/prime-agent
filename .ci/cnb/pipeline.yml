@@ -1,0 +1,67 @@
+# Installed as prime-agent/pipeline.yml in jachinshen/github-ci.
+.prime-agent-release-builds: &prime-agent-release-builds
+  - name: Prime Agent Linux x64
+    sandbox: false
+    runner:
+      tags: cnb:arch:amd64
+      cpus: 8
+    docker: &prime-agent-release-docker
+      build:
+        dockerfile: prime-agent/Dockerfile
+        by: [prime-agent/Dockerfile]
+      volumes:
+        - prime-agent-cargo-registry:/opt/cargo/registry:copy-on-write
+        - prime-agent-cargo-git:/opt/cargo/git:copy-on-write
+        - prime-agent-release-x64:./source/target:copy-on-write
+    env: &prime-agent-release-env
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "8"
+      DO_NOT_TRACK: "1"
+      PRIME_AGENT_CATALOG_REF: d4a099cf2aae7ea8c231298e93fd535756ef43c9
+    stages: &prime-agent-release-stages
+      - name: Fetch exact GitHub source
+        script: bash prime-agent/fetch.sh
+        timeout: 5m
+      - name: Build and verify release archive
+        script: env -u CNB_TOKEN bash source/.ci/cnb/release.sh
+        timeout: 90m
+      - name: Upload verified build artifacts
+        image: cnbcool/attachments:latest
+        settings:
+          commit: $CNB_COMMIT
+          attachments:
+            - source/target/cnb-artifacts/$GITHUB_SOURCE_SHA/*-artifacts.tar.gz
+            - source/target/cnb-artifacts/$GITHUB_SOURCE_SHA/*-artifacts.tar.gz.sha256
+  - name: Prime Agent Linux arm64
+    sandbox: false
+    runner:
+      tags: cnb:arch:arm64:v8
+      cpus: 8
+    docker:
+      <<: *prime-agent-release-docker
+      volumes:
+        - prime-agent-cargo-registry:/opt/cargo/registry:copy-on-write
+        - prime-agent-cargo-git:/opt/cargo/git:copy-on-write
+        - prime-agent-release-arm64:./source/target:copy-on-write
+    env: *prime-agent-release-env
+    stages: *prime-agent-release-stages
+
+main:
+  api_trigger_prime_agent_release_build: *prime-agent-release-builds
+  api_trigger_prime_agent_release:
+    - name: Prime Agent release observer
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 1
+      sandbox: false
+      docker:
+        build:
+          dockerfile: prime-agent/Dockerfile
+          by: [prime-agent/Dockerfile]
+      stages:
+        - name: Verify release builds and publish GitHub result
+          imports:
+            - https://cnb.cool/jachinshen/github-ci-secrets/-/blob/main/prime-agent-status.yml
+          script: python3 -I prime-agent/bridge.py observe
+          timeout: 2h

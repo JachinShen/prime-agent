@@ -83,3 +83,4 @@ coroutine that sends notifications after its cell has returned.
 
 The upstream release workflow depends on upstream publication credentials.
 Personal Nix deployments consume this branch or an explicitly selected commit/tag.
+For native Linux archive builds on CNB, see [CNB release builds](cnb-release.md).

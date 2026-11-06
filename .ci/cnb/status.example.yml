@@ -1,0 +1,8 @@
+# Copy to CNB KeyStore prime-agent-status.yml; fill the token there.
+allow_slugs:
+  - jachinshen/github-ci
+allow_branches:
+  - main
+allow_events:
+  - api_trigger_prime_agent_release
+PRIME_AGENT_STATUS_TOKEN: ""
