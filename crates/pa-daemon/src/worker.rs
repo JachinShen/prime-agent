@@ -618,12 +618,9 @@ impl Worker {
                 let notice_notify = Arc::clone(&work_notify);
                 let notice_recovery = Arc::clone(&recovery);
                 let notice_sink: crate::engine::KernelNoticeSink = Arc::new(move |notice| {
-                    let Some(engine) = notice_engine.upgrade() else {
-                        return;
-                    };
-                    if engine.session_is_closed() {
-                        return;
-                    }
+                    let engine = notice_engine
+                        .upgrade()
+                        .ok_or_else(|| anyhow::anyhow!("kernel notice session is unavailable"))?;
                     admit_kernel_notice(
                         &notice_recovery,
                         &notice_core,
@@ -632,7 +629,7 @@ impl Worker {
                         // Revalidated inside the admission's lock section: the
                         // close paths mark the session BEFORE clearing the lanes.
                         || engine.session_is_closed(),
-                    );
+                    )
                 });
                 let withdraw_core = Arc::clone(&core);
                 let withdraw_recovery = Arc::clone(&recovery);

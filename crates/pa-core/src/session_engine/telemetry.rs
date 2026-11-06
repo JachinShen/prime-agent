@@ -324,6 +324,7 @@ struct CounterValues {
     kernel_bootstrap_failed_count: u64,
     kernel_bootstrap_max_ms: u64,
     rlm_child_usage_count: u64,
+    rlm_notify_count: u64,
     rlm_child_input_tokens: u64,
     rlm_child_output_tokens: u64,
     rlm_child_cache_read_tokens: u64,
@@ -365,6 +366,11 @@ impl SessionCounters {
         self.with(|values| values.mcp_connector_use_count += 1);
     }
 
+    /// Successful coroutine notification admissions; no message content is recorded.
+    pub(crate) fn note_rlm_notify(&self) {
+        self.with(|values| values.rlm_notify_count += 1);
+    }
+
     /// One kernel boot: cold or revived, its outcome, its duration.
     pub fn note_kernel_bootstrap(&self, cold: bool, succeeded: bool, duration_ms: u64) {
         self.with(|values| {
@@ -391,6 +397,7 @@ impl SessionCounters {
                 ),
                 ("kernel_bootstrap_max_ms", values.kernel_bootstrap_max_ms),
                 ("rlm_child_usage_count", values.rlm_child_usage_count),
+                ("rlm_notify_count", values.rlm_notify_count),
                 ("rlm_child_input_tokens", values.rlm_child_input_tokens),
                 ("rlm_child_output_tokens", values.rlm_child_output_tokens),
                 (

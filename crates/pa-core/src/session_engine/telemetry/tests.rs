@@ -518,6 +518,8 @@ async fn session_counters_ride_session_ended() {
     telemetry.note_skill_used();
     telemetry.note_child_usage_attributed(50_208, 2_929, 0, 0, 0.008_995_7);
     counters.note_mcp_connector_use();
+    counters.note_rlm_notify();
+    counters.note_rlm_notify();
     counters.note_kernel_bootstrap(true, true, 1_200);
     counters.note_kernel_bootstrap(false, false, 300);
     telemetry.note_feature_outcome("goal", "completed", Some("create"));
@@ -531,6 +533,7 @@ async fn session_counters_ride_session_ended() {
     assert_eq!(ended["rlm_child_output_tokens"], serde_json::json!(2_929));
     assert!((ended["rlm_child_cost"].as_f64().unwrap() - 0.008_995_7).abs() < 1e-9);
     assert_eq!(ended["mcp_connector_use_count"], serde_json::json!(1));
+    assert_eq!(ended["rlm_notify_count"], serde_json::json!(2));
     assert_eq!(ended["kernel_bootstrap_count"], serde_json::json!(2));
     assert_eq!(ended["kernel_bootstrap_cold_count"], serde_json::json!(1));
     assert_eq!(ended["kernel_bootstrap_failed_count"], serde_json::json!(1));
@@ -1215,18 +1218,21 @@ async fn off_period_session_counters_never_count() {
     // the pre-install MCP/kernel window records nothing either.
     telemetry.note_skill_used();
     counters.note_mcp_connector_use();
+    counters.note_rlm_notify();
     counters.note_kernel_bootstrap(true, true, 1_200);
     telemetry.note_feature_outcome("goal", "completed", Some("create"));
     telemetry.note_child_usage_attributed(50_208, 2_929, 0, 0, 0.008_995_7);
 
     // On: the same seams record again.
     on.store(true, std::sync::atomic::Ordering::Relaxed);
+    counters.note_rlm_notify();
     telemetry.note_skill_used();
     telemetry.note_skill_used();
 
     telemetry.end().await.unwrap();
     let ended = &event_properties(&fixture.mock, "agent session ended").await[0];
     assert_eq!(ended["skill_use_count"], serde_json::json!(2));
+    assert_eq!(ended["rlm_notify_count"], serde_json::json!(1));
     assert_eq!(
         ended["mcp_connector_use_count"],
         serde_json::json!(0),

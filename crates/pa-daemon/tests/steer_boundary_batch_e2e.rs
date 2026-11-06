@@ -34,6 +34,15 @@ use serde_json::{json, Value};
 /// The kernel Python with prime-agent-runtime installed. Skipped (with a
 /// note) on machines without a live install.
 fn kernel_python() -> Option<PathBuf> {
+    if let Some(python) = std::env::var_os("PA_E2E_KERNEL_PYTHON") {
+        let python = PathBuf::from(python);
+        assert!(
+            python.is_file(),
+            "kernel Python does not exist: {}",
+            python.display()
+        );
+        return Some(python);
+    }
     let candidate = PathBuf::from(std::env::var("HOME").map_or_else(
         |_| "/home/ubuntu/.prime/agent/kernel-venv/bin/python".to_string(),
         |home| format!("{home}/.prime/agent/kernel-venv/bin/python"),
@@ -387,6 +396,199 @@ fn multi_steer_parked_mid_run_co_delivers_as_one_batched_turn() {
         "the follow-up's own turn carries its own reply: {rows:?}"
     );
     drop(supervisor);
+}
+
+/// A real kernel task survives its cell, wakes an idle worker, and admits
+/// another notification while the model's foreground cell is still waiting.
+#[tokio::test]
+async fn coroutine_notifications_wake_idle_agents_and_queue_while_busy() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    let Some(_kernel) = kernel_python() else {
+        return; // This integration test needs an installed Python runtime.
+    };
+    let control = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = control.local_addr().unwrap().port();
+    // Keep the lease's initial path stable across macOS's /var symlink.
+    let dir = tempfile::TempDir::new_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let agent_dir = dir.path().join("agent");
+    let cwd = dir.path().join("work");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let script = faux_script(dir.path());
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&script).unwrap()).unwrap();
+    config["tokensPerSecond"] = json!(100_000);
+    config["responses"] = json!([
+        {"content": [{"type": "toolCall", "name": "python_repl", "id": "start-background",
+            "arguments": {"code": format!(r#"
+import asyncio
+foreground_release = asyncio.Event()
+async def background():
+    global control_writer
+    reader, control_writer = await asyncio.open_connection('127.0.0.1', {port})
+    await reader.readline()
+    await rlm.notify('stage one')
+    control_writer.write(b'stage one admitted\n')
+    await control_writer.drain()
+    await reader.readline()
+    await rlm.notify('stage two')
+    control_writer.write(b'stage two admitted\n')
+    await control_writer.drain()
+    await reader.readline()
+    foreground_release.set()
+    control_writer.close()
+job = asyncio.create_task(background())
+"#)}}]},
+        {"content": [{"type": "text", "text": "background armed"}]},
+        {"content": [{"type": "toolCall", "name": "python_repl", "id": "foreground-wait",
+            "arguments": {"code": "control_writer.write(b'foreground waiting\\n')\nawait control_writer.drain()\nawait foreground_release.wait()\nawait job"}}]},
+        {"content": [{"type": "text", "text": "notifications handled"}]}
+    ]);
+    std::fs::write(&script, config.to_string()).unwrap();
+    let socket = dir.path().join("notify.sock");
+    let _supervisor = spawn_supervisor(&socket, &agent_dir, &script);
+    let mut client = Client::connect(&socket);
+    let created = client.send(
+        "create",
+        &json!({"type": "create", "config": {
+            "cwd": cwd, "model": "faux-1",
+        }}),
+    );
+    assert_eq!(created["success"], true, "{created}");
+    let session_id = created["data"]["id"]
+        .as_str()
+        .or_else(|| created["data"]["sessionId"].as_str())
+        .unwrap()
+        .to_string();
+    let attached = client.send(
+        "attach",
+        &json!({"type": "attach", "activeSessionId": session_id}),
+    );
+    assert_eq!(attached["success"], true, "{attached}");
+    let started = client.send(
+        "prompt",
+        &json!({"type": "prompt", "activeSessionId": session_id,
+        "message": "start background work"}),
+    );
+    assert_eq!(started["success"], true, "{started}");
+    // agent_end is observable completion, not a timer for guessing readiness.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !event_types(&client.events)
+        .iter()
+        .any(|kind| kind == "agent_end")
+    {
+        assert!(Instant::now() < deadline, "initial turn did not settle");
+        let event = client.read_line();
+        client.collect_event(&event);
+    }
+    let state = client.send(
+        "idle",
+        &json!({"type": "get_state", "activeSessionId": session_id}),
+    );
+    assert_eq!(state["success"], true, "{state}");
+    assert_eq!(state["data"]["isStreaming"], false, "{state}");
+    assert!(event_texts(&client.events)
+        .iter()
+        .any(|text| text == "background armed"));
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(30), control.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = tokio::io::BufReader::new(reader).lines();
+    writer.write_all(b"stage one\n").await.unwrap();
+    let mut readiness = std::collections::BTreeSet::new();
+    for _ in 0..2 {
+        readiness.insert(
+            tokio::time::timeout(Duration::from_secs(30), lines.next_line())
+                .await
+                .unwrap()
+                .unwrap()
+                .expect("kernel control line"),
+        );
+    }
+    assert_eq!(
+        readiness,
+        std::collections::BTreeSet::from([
+            "stage one admitted".to_string(),
+            "foreground waiting".to_string(),
+        ])
+    );
+    writer.write_all(b"stage two\n").await.unwrap();
+    let admitted = tokio::time::timeout(Duration::from_secs(30), lines.next_line())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(admitted.as_deref(), Some("stage two admitted"));
+    let state = client.send(
+        "busy",
+        &json!({"type": "get_state", "activeSessionId": session_id}),
+    );
+    assert_eq!(state["success"], true, "{state}");
+    assert_eq!(state["data"]["isStreaming"], true, "{state}");
+    let queue = client.send(
+        "queue",
+        &json!({"type": "get_queue", "activeSessionId": session_id}),
+    );
+    assert_eq!(queue["success"], true, "{queue}");
+    assert_eq!(
+        queue["data"],
+        json!({
+            "steering": ["Coroutine notification: [rlm-notify]\n\nstage two"],
+            "followUp": [],
+        })
+    );
+    // The second notify already returned, although the foreground tool is blocked.
+    writer.write_all(b"release\n").await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !(client
+        .events
+        .last()
+        .is_some_and(|event| event["type"] == "agent_end")
+        && event_texts(&client.events)
+            .iter()
+            .any(|text| text == "notifications handled"))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "notification turn did not settle"
+        );
+        let event = client.read_line();
+        client.collect_event(&event);
+    }
+    let messages = client.send(
+        "messages",
+        &json!({"type": "get_messages", "activeSessionId": session_id}),
+    );
+    assert_eq!(messages["success"], true, "{messages}");
+    let notifications: Vec<_> = messages["data"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["customType"] == "rlm_notification")
+        .map(|message| message["content"].clone())
+        .collect();
+    let persisted: Vec<Value> =
+        std::fs::read_to_string(created["data"]["sessionFile"].as_str().unwrap())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+    let persisted_notifications: Vec<_> = persisted
+        .iter()
+        .filter(|entry| {
+            entry["type"] == "custom_message" && entry["customType"] == "rlm_notification"
+        })
+        .map(|entry| entry["content"].clone())
+        .collect();
+    assert_eq!(
+        notifications,
+        vec![
+            json!("[rlm-notify]\n\nstage one"),
+            json!("[rlm-notify]\n\nstage two")
+        ],
+        "messages: {messages}"
+    );
+    assert_eq!(persisted_notifications, notifications);
 }
 
 fn event_types(events: &[Value]) -> Vec<String> {

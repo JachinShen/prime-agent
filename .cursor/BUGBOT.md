@@ -36,6 +36,7 @@ either changes.
 
 ## Change hygiene
 
+- The persistent Python RLM surface includes `await rlm.notify(message)`: it admits a notification to the calling session's agent, waking it when idle and queuing it when busy. Keep this contract aligned with AGENTS.md.
 - One logical change per PR: flag PRs that mix a feature with unrelated lint fixes or refactors, and fixes that do not ride with the change that introduced them.
 - If a change forces edits across many crate internals, the crate boundary is what needs fixing: flag that instead of the edits.
 - Risky raw APIs route through the in-house wrappers, not new raw call sites: process control (signals/process groups), file locking, permissions, and shell selection go through `pa-core`'s `platform` wall; durable renames go through `rename_onto`; TS-parity hashing (tool-call id normalization) uses `pa-ai`'s in-house `short_hash`; environment-variable resolution goes through its owning module (telemetry overrides in `pa-telemetry`, provider API keys in `pa-ai`), not duplicated ad-hoc parsing. Flag a raw call site that bypasses these walls.

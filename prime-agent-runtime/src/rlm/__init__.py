@@ -446,6 +446,16 @@ async def collect(
 RLM_PROGRESS_NOTE_MAX_LENGTH = 512
 
 
+async def notify(message: str) -> None:
+    """Notify this session's agent; return once queued, without waiting for its turn."""
+    if not isinstance(message, str):
+        raise TypeError(f"message must be str, got {type(message).__name__}")
+    stripped = message.strip()
+    if not stripped:
+        raise ValueError("message must not be empty")
+    await host_request("rlm.notify", {"message": stripped})
+
+
 async def progress_note(message: str) -> RLMProgressNoteResult:
     """Report brief in-flight progress to the parent orchestrator.
 
@@ -664,6 +674,9 @@ class _RLMNamespace:
     async def progress_note(self, message: str) -> RLMProgressNoteResult:
         return await progress_note(message)
 
+    async def notify(self, message: str) -> None:
+        await notify(message)
+
     async def delete_subagent(self, target: str | RLMSubagent | RLMSpawnHandle) -> RLMSubagent:
         return await delete_subagent(target)
 
@@ -727,6 +740,7 @@ __all__ = [
     "harness",
     "host_request",
     "list_subagents",
+    "notify",
     "persistent_shells",
     "progress_note",
     "rename",

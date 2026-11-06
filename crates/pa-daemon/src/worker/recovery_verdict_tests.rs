@@ -90,7 +90,8 @@ async fn a_bash_completion_notice_admits_the_steering_lane_with_busy_evidence() 
         &notify,
         crate::engine::KernelNotice::bash_completion(4321, "sleep 12; echo RW_WAKE_DONE", 0),
         || false,
-    );
+    )
+    .unwrap();
     let core = worker.core.lock().unwrap();
     let item = core
         .steering
@@ -151,12 +152,45 @@ async fn a_bash_completion_notice_on_a_busy_session_queues_a_visible_steer_row()
         &notify,
         crate::engine::KernelNotice::bash_completion(99, "make gates", 2),
         || false,
-    );
+    )
+    .unwrap();
     let core = worker.core.lock().unwrap();
     let item = core.steering.front().expect("the queued notice");
     assert!(item.queue_visible, "the busy session keeps a visible row");
     assert_eq!(item.policy, TurnPolicy::Queued);
     drop(core);
+    let _ = std::fs::remove_dir_all(worker.config.socket_path.parent().unwrap());
+}
+
+/// A refused admission must reach the caller instead of acknowledging a dropped row.
+#[tokio::test]
+async fn invalid_kernel_notices_report_failed_admission() {
+    let worker = worker_with_journal();
+    let notify = Arc::new(Notify::new());
+    let error = admit_kernel_notice(
+        &worker.recovery,
+        &worker.core,
+        &notify,
+        crate::engine::KernelNotice::bash_completion(99, "finished command", 0),
+        || true,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("session is closed"), "{error}");
+    assert!(worker.core.lock().unwrap().steering.is_empty());
+    let mut notice = crate::engine::KernelNotice::bash_completion(99, "finished command", 0);
+    notice.row.content = pa_types::ai::UserContent::Blocks(Vec::new());
+    let error =
+        admit_kernel_notice(&worker.recovery, &worker.core, &notify, notice, || false).unwrap_err();
+    assert!(
+        error.to_string().contains("requires text content"),
+        "{error}"
+    );
+    assert!(worker.core.lock().unwrap().steering.is_empty());
+    assert!(
+        WorkerRecoveryJournal::read_latest(&worker.config.recovery_journal_path)
+            .unwrap()
+            .is_empty()
+    );
     let _ = std::fs::remove_dir_all(worker.config.socket_path.parent().unwrap());
 }
 
@@ -172,7 +206,8 @@ async fn bash_consumed_withdraws_the_undelivered_notice_and_settles() {
         &notify,
         crate::engine::KernelNotice::bash_completion(4321, "sleep 12; echo RW_WAKE_DONE", 0),
         || false,
-    );
+    )
+    .unwrap();
     assert!(
         WorkerRecoveryJournal::read_interrupted(&worker.config.recovery_journal_path),
         "the notice admission is live work"

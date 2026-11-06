@@ -461,6 +461,21 @@ pub async fn create_session(mut config: SessionEngineConfig) -> anyhow::Result<S
             &mut handlers,
         );
     }
+    if let Some(notify) = handlers.get("rlm.notify").cloned() {
+        let counters = std::sync::Arc::clone(&session_counters);
+        handlers.register(
+            "rlm.notify",
+            crate::kernel::shared::host_handler(move |payload| {
+                let notify = std::sync::Arc::clone(&notify);
+                let counters = std::sync::Arc::clone(&counters);
+                async move {
+                    let reply = notify(payload).await?;
+                    counters.note_rlm_notify();
+                    Ok(reply)
+                }
+            }),
+        );
+    }
     // One model-visible skill list, computed now that the host-handler
     // registry is final (every registration, the refine handlers, and
     // the in-process bash notices are in): a controller-backed bundled

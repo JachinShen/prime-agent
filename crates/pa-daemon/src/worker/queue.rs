@@ -521,8 +521,8 @@ pub(crate) fn admit_goal_follow_up(
     work_notify.notify_one();
 }
 
-/// Admit one kernel notice (a detached bash completion or a factory run
-/// milestone): the row queues on the steering lane (busy sessions keep a
+/// Admit one kernel notice (a bash completion, factory milestone, or coroutine
+/// notification): the row queues on the steering lane (busy sessions keep a
 /// visible steer row, idle sessions wake into it); a crash before the
 /// delivery revives with the row replaying.
 pub(crate) fn admit_kernel_notice(
@@ -531,11 +531,13 @@ pub(crate) fn admit_kernel_notice(
     work_notify: &Arc<Notify>,
     notice: crate::engine::KernelNotice,
     session_is_closed: impl Fn() -> bool,
-) {
+) -> anyhow::Result<()> {
     let crate::engine::KernelNotice { row, preview_label } = notice;
     let content = match &row.content {
         pa_types::ai::UserContent::Text(text) => text.clone(),
-        pa_types::ai::UserContent::Blocks(_) => String::new(),
+        pa_types::ai::UserContent::Blocks(_) => {
+            anyhow::bail!("kernel notice requires text content")
+        }
     };
     // The busy sample and the push share ONE critical section: a turn starting
     // between them would queue an invisible row for a busy session.
@@ -543,7 +545,7 @@ pub(crate) fn admit_kernel_notice(
     // A notice that raced past the sink's first check is refused here or wiped
     // by the close's clear — never a completion turn for a closed session.
     if session_is_closed() {
-        return;
+        anyhow::bail!("kernel notice session is closed");
     }
     let (policy, queue_visible) = if core_guard.busy {
         (TurnPolicy::Queued, true)
@@ -580,6 +582,7 @@ pub(crate) fn admit_kernel_notice(
         },
     );
     work_notify.notify_one();
+    Ok(())
 }
 
 /// Withdraw one queued bash completion notice: the kernel read the result

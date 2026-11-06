@@ -1,6 +1,6 @@
 //! The kernel notice seam (the TS async-bash-completion wake): the
-//! `bash.completed`/`bash.consumed` notices plus the `factory.progress`
-//! run-milestone notice that rides the same steering delivery. Here live
+//! `bash.completed`/`bash.consumed` notices, `factory.progress` milestones,
+//! and `rlm.notify` messages that ride the same steering delivery. Here live
 //! the shared notice types, the TS payload validation, and the
 //! host-handler registration, plus the in-process sinks a daemonless
 //! embedding uses — the notice row steers onto the session's own agent
@@ -23,7 +23,8 @@ use super::{session_message_to_loop, SessionAgentMessage};
 /// One kernel notice the host admits as a steering row (TS
 /// `_promptInjectedMessage` with `streamingBehavior: "steer"`,
 /// `queueIfBusy`, and `resumeIfIdle`): a detached bash completion
-/// (`bash.completed`) or a factory run milestone (`factory.progress`).
+/// (`bash.completed`), a factory run milestone (`factory.progress`), or a
+/// coroutine notification (`rlm.notify`).
 #[derive(Debug, Clone)]
 pub struct KernelNotice {
     /// The durable custom row the woken or steered turn carries.
@@ -50,8 +51,9 @@ impl KernelNotice {
 
 /// The queue-admission seam for one kernel notice (the daemon worker's
 /// steering lane + runner wake + recovery busy-evidence; the in-process
-/// sinks below steer onto the session's own agent).
-pub type KernelNoticeSink = Arc<dyn Fn(KernelNotice) + Send + Sync>;
+/// sinks below steer onto the session's own agent). Returns an error when
+/// the notice cannot be admitted, including a closed or unavailable session.
+pub type KernelNoticeSink = Arc<dyn Fn(KernelNotice) -> anyhow::Result<()> + Send + Sync>;
 
 /// The kernel read a finished command's result before its notice
 /// delivered (the `bash.consumed` host request): the queued notice is stale.
@@ -68,7 +70,7 @@ pub type BashConsumedSink = Arc<dyn Fn(BashConsumedNotice) + Send + Sync>;
 /// notice admits its row, so the embedding resumes the idle run.
 pub type BashNoticeWake = Arc<dyn Fn() + Send + Sync>;
 
-/// The `bash.completed`/`bash.consumed`/`factory.progress` kernel host
+/// The `bash.completed`/`bash.consumed`/`factory.progress`/`rlm.notify` kernel host
 /// handlers (TS `createAsyncBashCompletionHostHandler`,
 /// `createAsyncBashConsumedHostHandler`, `createFactoryProgressHostHandler`).
 pub fn register_kernel_notice_host_handlers(
@@ -86,7 +88,7 @@ pub fn register_kernel_notice_host_handlers(
                 // Any closed-session gate is the sink's (the daemon
                 // worker refuses injections after kill/shutdown like TS
                 // `_disposed`; the in-process sinks bind a weak agent).
-                completion(notice);
+                completion(notice)?;
                 Ok(serde_json::json!({}))
             })
         }),
@@ -102,14 +104,46 @@ pub fn register_kernel_notice_host_handlers(
             })
         }),
     );
+    let progress = Arc::clone(&notice);
     handlers.register(
         "factory.progress",
         host_handler(move |payload| {
-            let notice = notice.clone();
+            let notice = progress.clone();
             Box::pin(async move {
-                notice(validate_factory_progress(&payload.data)?);
+                notice(validate_factory_progress(&payload.data)?)?;
                 Ok(serde_json::json!({}))
             })
+        }),
+    );
+    handlers.register(
+        "rlm.notify",
+        host_handler(move |payload| {
+            let notice = Arc::clone(&notice);
+            async move {
+                let message = payload
+                    .data
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|message| !message.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("rlm.notify message must be a non-empty string")
+                    })?;
+                notice(KernelNotice {
+                    row: CustomMessage {
+                        custom_type: "rlm_notification".to_string(),
+                        content: pa_types::ai::UserContent::Text(format!(
+                            "[rlm-notify]\n\n{message}"
+                        )),
+                        display: true,
+                        details: None,
+                        timestamp: crate::autonomous::now_millis(),
+                        rest: serde_json::Map::default(),
+                    },
+                    preview_label: "Coroutine notification",
+                })?;
+                Ok(serde_json::json!({}))
+            }
         }),
     );
 }
@@ -194,14 +228,15 @@ pub fn register_in_process_kernel_notice_handlers(
     let notice_wake = Arc::clone(wake);
     let notice_slot = Arc::clone(agent_slot);
     let notice: KernelNoticeSink = Arc::new(move |notice| {
-        let Some(agent) = bound_agent(&notice_slot) else {
-            return;
-        };
-        let Some(row) = session_message_to_loop(&SessionAgentMessage::Custom(notice.row)) else {
-            return;
-        };
+        let agent = bound_agent(&notice_slot)
+            .ok_or_else(|| anyhow::anyhow!("kernel notice session is unavailable"))?;
+        let row =
+            session_message_to_loop(&SessionAgentMessage::Custom(notice.row)).ok_or_else(|| {
+                anyhow::anyhow!("kernel notice could not be converted to a session row")
+            })?;
         agent.steer(row);
         notice_wake();
+        Ok(())
     });
     let consumed_slot = Arc::clone(agent_slot);
     let consumed: BashConsumedSink = Arc::new(move |notice| {
@@ -444,5 +479,59 @@ mod tests {
             "exitCode": "0",
         }))
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn notify_admits_one_custom_row_and_wakes_the_current_agent() {
+        let (agent, _slot, wakes, handlers) = wired_agent();
+        let handler = handlers.get("rlm.notify").expect("notify handler");
+        assert_eq!(
+            dispatch(
+                handler,
+                serde_json::json!({"message": "  stage complete  "})
+            )
+            .await
+            .unwrap(),
+            serde_json::json!({})
+        );
+        let queued = agent.remove_queued_messages(|_| true);
+        let [AgentMessage::Custom(custom)] = queued.as_slice() else {
+            panic!("one notification expected: {queued:?}");
+        };
+        let mut payload = custom.payload.clone();
+        assert!(payload
+            .as_object_mut()
+            .unwrap()
+            .remove("timestamp")
+            .is_some());
+        assert_eq!(
+            payload,
+            serde_json::json!({
+                "customType": "rlm_notification",
+                "content": "[rlm-notify]\n\nstage complete",
+                "display": true,
+            })
+        );
+        assert_eq!(wakes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn notify_refuses_invalid_messages_and_an_unbound_session() {
+        let (agent, slot, wakes, handlers) = wired_agent();
+        let handler = handlers.get("rlm.notify").expect("notify handler");
+        for data in [
+            serde_json::json!({}),
+            serde_json::json!({"message": 5}),
+            serde_json::json!({"message": " \n\t"}),
+        ] {
+            assert!(dispatch(handler, data).await.is_err());
+        }
+        *slot.lock().unwrap() = None;
+        let error = dispatch(handler, serde_json::json!({"message": "finished"}))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("session"), "{error}");
+        assert!(!agent.has_queued_messages());
+        assert_eq!(wakes.load(Ordering::SeqCst), 0);
     }
 }
