@@ -606,11 +606,22 @@ pub(crate) fn parse_csi_u_encoded_key_code(buffer: &[u8]) -> io::Result<Option<I
         }
     }
 
+    // Keep the CSI-u origin until dispatch can distinguish an echo from repeated text.
+    let printable_state = if matches!(keycode, KeyCode::Char(c) if u32::from(c) == codepoint && c >= ' ')
+        && s.split(':').enumerate().all(|(index, field)| {
+            index < 3
+                && (index == 1 || !field.is_empty())
+                && field.bytes().all(|byte| byte.is_ascii_digit())
+        }) {
+        KeyEventState::KITTY_PRINTABLE
+    } else {
+        KeyEventState::NONE
+    };
     let input_event = Event::Key(KeyEvent::new_with_kind_and_state(
         keycode,
         modifiers,
         kind,
-        state_from_keycode | state_from_modifiers,
+        state_from_keycode | state_from_modifiers | printable_state,
     ));
 
     Ok(Some(InternalEvent::Event(input_event)))
@@ -1232,13 +1243,43 @@ mod tests {
     }
 
     #[test]
+    fn printable_reports_retain_their_wire_provenance() {
+        for (wire, expected_state) in [
+            ("e", KeyEventState::NONE),
+            ("\x1b[101u", KeyEventState::KITTY_PRINTABLE),
+            ("\x1b[101:69u", KeyEventState::KITTY_PRINTABLE),
+            ("\x1b[101::69u", KeyEventState::KITTY_PRINTABLE),
+            ("\x1b[101;1u", KeyEventState::NONE),
+            ("\x1b[101;1:1u", KeyEventState::NONE),
+            ("\x1b[101;65u", KeyEventState::CAPS_LOCK),
+        ] {
+            assert_eq!(
+                parse_event(wire.as_bytes(), /*input_available*/ false).unwrap(),
+                Some(InternalEvent::Event(Event::Key(
+                    KeyEvent::new_with_kind_and_state(
+                        KeyCode::Char('e'),
+                        KeyModifiers::NONE,
+                        KeyEventKind::Press,
+                        expected_state,
+                    )
+                ))),
+                "wire={wire:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_basic_csi_u_encoded_key_code() {
         assert_eq!(
             parse_csi_u_encoded_key_code(b"\x1B[97u").unwrap(),
-            Some(InternalEvent::Event(Event::Key(KeyEvent::new(
-                KeyCode::Char('a'),
-                KeyModifiers::empty()
-            )))),
+            Some(InternalEvent::Event(Event::Key(
+                KeyEvent::new_with_kind_and_state(
+                    KeyCode::Char('a'),
+                    KeyModifiers::empty(),
+                    KeyEventKind::Press,
+                    KeyEventState::KITTY_PRINTABLE,
+                )
+            ))),
         );
         assert_eq!(
             parse_csi_u_encoded_key_code(b"\x1B[97;2u").unwrap(),

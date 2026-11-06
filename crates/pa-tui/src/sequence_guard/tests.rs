@@ -43,11 +43,16 @@ fn report_corpus() -> Vec<String> {
 }
 
 /// What leaked as key presses (mouse reports of both shapes are the expected payload instead).
+/// Compare logical keys without the reader's protocol provenance.
 fn leaks(outputs: &[GuardOutput]) -> Vec<Event> {
     outputs
         .iter()
         .filter_map(|out| match out {
-            GuardOutput::Event(event @ Event::Key(_)) => Some(event.clone()),
+            GuardOutput::Event(Event::Key(key)) => {
+                let mut key = *key;
+                key.state.remove(KeyEventState::KITTY_PRINTABLE);
+                Some(Event::Key(key))
+            }
             _ => None,
         })
         .collect()

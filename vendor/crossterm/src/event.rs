@@ -754,6 +754,9 @@ bitflags! {
         ///
         /// **Note:** this is set for the initial press of Num Lock itself.
         const NUM_LOCK = 0b0000_0100;
+        /// An unmodified CSI-u printable report, rather than committed UTF-8 text.
+        /// Prime Agent uses and removes this provenance bit before dispatch.
+        const KITTY_PRINTABLE = 0b0000_1000;
         const NONE = 0b0000_0000;
     }
 }

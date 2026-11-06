@@ -169,6 +169,39 @@ fn a_kitty_terminal_upgrades_and_a_da1_terminal_settles_without_flags() {
     da1.finish();
 }
 
+#[test]
+fn kitty_text_commits_preserve_repeated_characters_in_the_prompt() {
+    let _lock = HARNESS_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for (wire, text) in [
+        (
+            "sheet bookkeeper 哈哈，天天 😀😀Q",
+            "sheet bookkeeper 哈哈，天天 😀😀Q",
+        ),
+        ("\x1b[101u\x1b[101uQ", "eeQ"),
+        ("\x1b[101ueQ", "eQ"),
+    ] {
+        let mut harness = EarlyTypingHarness::start();
+        harness.chunk_time_of(KITTY_QUERY).expect("the kitty query");
+        let mark = harness.mark();
+        harness.write(KITTY_ANSWER);
+        harness.wait_from(mark, KITTY_FLAGS_PUSH, "the kitty protocol is active");
+
+        let mark = harness.mark();
+        harness.write(wire.as_bytes());
+        // The trailing sentinel proves the entire commit reached the editor before submission.
+        harness.wait_from(mark, b"Q", "the text commit's last character rendered");
+        harness.write(b"\r");
+        let prompt = harness
+            .prompts
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the prompt reached the mock supervisor");
+        assert_eq!(prompt["message"], text, "wire={wire:?}");
+        harness.finish();
+    }
+}
+
 /// One pty-backed product child plus its mock supervisor, with a
 /// chunk-accurate timing ledger over the raw byte stream.
 struct EarlyTypingHarness {
@@ -176,6 +209,7 @@ struct EarlyTypingHarness {
     /// The mock-supervisor server thread's join handle (exits with the child's connection).
     _server: std::thread::JoinHandle<()>,
     master: LedgerReader,
+    prompts: std::sync::mpsc::Receiver<Value>,
 }
 
 impl EarlyTypingHarness {
@@ -183,7 +217,8 @@ impl EarlyTypingHarness {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let socket = dir.path().join("tui.sock");
         let supervisor = MockSupervisor::bind(&socket);
-        let server = std::thread::spawn(move || supervisor.serve());
+        let (prompt_sender, prompts) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || supervisor.serve(&prompt_sender));
 
         let pty = openpty(
             Some(&Winsize {
@@ -204,6 +239,7 @@ impl EarlyTypingHarness {
             child,
             _server: server,
             master: LedgerReader::new(pty.master),
+            prompts,
         }
     }
 
@@ -290,17 +326,35 @@ impl EarlyTypingHarness {
     }
 
     fn finish(mut self) {
-        let _ = self.child.kill();
-        // Reap the child so no zombie is left behind.
-        let _ = self.child.wait();
+        self.stop().expect("stop and reap the pty child");
+    }
+
+    fn stop(&mut self) -> std::io::Result<()> {
+        if self.child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        self.child.kill()?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.child.try_wait()?.is_none() {
+            // macOS can wait for queued terminal output while exiting. Keep draining the master
+            // instead of blocking in wait() while the child is still closing its tty.
+            self.master.drain_once();
+            if Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "the pty child did not exit",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        Ok(())
     }
 }
 
 impl Drop for EarlyTypingHarness {
     fn drop(&mut self) {
-        // A panicking wait must never leak the pty child.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // Best-effort cleanup during unwinding; finish() asserts successful teardown.
+        let _ = self.stop();
     }
 }
 
@@ -469,16 +523,19 @@ impl MockSupervisor {
     }
 
     /// One listener, every connection served in turn.
-    fn serve(self) {
+    fn serve(self, prompts: &std::sync::mpsc::Sender<Value>) {
         for stream in self.listener.incoming() {
             match stream {
-                Ok(stream) => Self::serve_connection(stream),
+                Ok(stream) => Self::serve_connection(stream, prompts),
                 Err(_) => return,
             }
         }
     }
 
-    fn serve_connection(stream: std::os::unix::net::UnixStream) {
+    fn serve_connection(
+        stream: std::os::unix::net::UnixStream,
+        prompts: &std::sync::mpsc::Sender<Value>,
+    ) {
         let write_stream = stream.try_clone().expect("clone mock socket");
         let mut writer = write_stream;
         let mut reader = std::io::BufReader::new(stream);
@@ -508,6 +565,9 @@ impl MockSupervisor {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
+            if command_type == "prompt" {
+                prompts.send(command.clone()).expect("record the prompt");
+            }
             match command_type.as_str() {
                 "create" => {
                     write_json(

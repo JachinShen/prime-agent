@@ -658,11 +658,21 @@ fn csi_u_key(body: &[u8]) -> Option<Event> {
             modifiers.set(KeyModifiers::SHIFT, false);
         }
     }
+    let printable_state = if matches!(code, KeyCode::Char(c) if u32::from(c) == codepoint && c >= ' ')
+        && text.split(':').enumerate().all(|(index, field)| {
+            index < 3
+                && (index == 1 || !field.is_empty())
+                && field.bytes().all(|byte| byte.is_ascii_digit())
+        }) {
+        KeyEventState::KITTY_PRINTABLE
+    } else {
+        KeyEventState::NONE
+    };
     Some(Event::Key(KeyEvent::new_with_kind_and_state(
         code,
         modifiers,
         kind,
-        state_from_keycode | lock_state,
+        state_from_keycode | lock_state | printable_state,
     )))
 }
 
