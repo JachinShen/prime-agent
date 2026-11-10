@@ -65,3 +65,9 @@ Everything in this crate is deliberately `pub` - it is the cross-crate contract.
 
 ## Depends on
 serde, serde_json, thiserror, anyhow, tokio, regex (the incident classifier's TS log-message patterns; see the `incident` scope entry). No workspace crates.
+
+`ai::RequestCompression` and the optional `Model::request_compression` /
+`compression_min_bytes` fields carry provider request encoding policy from core
+to AI transports. Absent fields are omitted from serialized model descriptors.
+This is shared public vocabulary; execution remains in pa-ai. Dependency direction
+is unchanged.

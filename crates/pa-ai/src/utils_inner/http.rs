@@ -3,7 +3,9 @@
 //! HTTP failures as [`ProviderError::Http`]; request-send failures as
 //! [`ProviderError::Connection`].
 
-use std::sync::OnceLock;
+use std::{io::Write, sync::OnceLock};
+
+use pa_types::ai::RequestCompression;
 
 use tokio_util::sync::CancellationToken;
 
@@ -187,6 +189,8 @@ pub struct RequestOptions {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<String>,
+    pub request_compression: Option<RequestCompression>,
+    pub compression_min_bytes: Option<usize>,
     pub signal: Option<CancellationToken>,
     pub timeout_ms: Option<u64>,
     /// The provider family's connection-error shape (fixed texts, names, and error codes the TS
@@ -205,12 +209,25 @@ impl RequestOptions {
             url,
             headers: Vec::new(),
             body: None,
+            request_compression: None,
+            compression_min_bytes: None,
             signal: None,
             timeout_ms: None,
             connection: ConnectionErrorProfile::Sdk,
             transport: Transport::Http1,
         }
     }
+}
+
+// Fast synchronous encoding keeps CPU cost small and owns all state per request.
+fn gzip_body(body: &str) -> Result<Vec<u8>, ProviderError> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(body.as_bytes()).map_err(|error| {
+        ProviderError::Message(format!("Failed to gzip provider request: {error}"))
+    })?;
+    encoder.finish().map_err(|error| {
+        ProviderError::Message(format!("Failed to finish gzip provider request: {error}"))
+    })
 }
 
 /// Issue a request and return the response with a streaming body. No retries: retry ownership lives
@@ -246,7 +263,19 @@ pub async fn send(request: RequestOptions) -> Result<HttpResponse, ProviderError
         builder = builder.header("content-type", "application/json");
     }
     if let Some(body) = &request.body {
-        builder = builder.body(body.clone());
+        if request.request_compression == Some(RequestCompression::Gzip)
+            && !body.is_empty()
+            && body.len() >= request.compression_min_bytes.unwrap_or(16_384)
+            && !request
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("content-encoding"))
+        {
+            let compressed = gzip_body(body)?;
+            builder = builder.header("content-encoding", "gzip").body(compressed);
+        } else {
+            builder = builder.body(body.clone());
+        }
     }
 
     let send_future = builder.send();
@@ -350,6 +379,108 @@ pub async fn post_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn capture_request(mut request: RequestOptions) -> (String, Vec<u8>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        request.url = format!("http://{}/", listener.local_addr().unwrap());
+        let capture = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            let head_end = loop {
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(count, 0);
+                bytes.extend_from_slice(&buffer[..count]);
+                if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                    break end + 4;
+                }
+            };
+            let head = String::from_utf8(bytes[..head_end].to_vec()).unwrap();
+            let length: usize = head
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse().unwrap())
+                })
+                .unwrap_or(0);
+            while bytes.len() - head_end < length {
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(count, 0);
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            (head.to_ascii_lowercase(), bytes[head_end..].to_vec())
+        });
+        send(request).await.unwrap();
+        capture.await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn gzip_request_round_trips_exact_json_at_threshold() {
+        use std::io::Read;
+        let original = serde_json::json!({"messages": [{"role": "user", "content": "hello 世界 ".repeat(16000)}]}).to_string();
+        let started = std::time::Instant::now();
+        let compressed = gzip_body(&original).unwrap();
+        eprintln!(
+            "gzip measurement: {} bytes -> {} bytes in {:?}",
+            original.len(),
+            compressed.len(),
+            started.elapsed()
+        );
+        let mut request = RequestOptions::new(reqwest::Method::POST, String::new());
+        request.body = Some(original.clone());
+        request.request_compression = Some(RequestCompression::Gzip);
+        request.compression_min_bytes = Some(original.len());
+        let (head, body) = capture_request(request).await;
+        assert!(head.contains("content-encoding: gzip\r\n"));
+        let mut decoded = String::new();
+        flate2::read::GzDecoder::new(body.as_slice())
+            .read_to_string(&mut decoded)
+            .unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[tokio::test]
+    async fn compression_preserves_uncompressed_requests_and_explicit_encoding() {
+        for (compression, threshold, original, encoding) in [
+            (None, 0, "large".repeat(4000), None),
+            (
+                Some(RequestCompression::None),
+                0,
+                "large".repeat(4000),
+                None,
+            ),
+            (Some(RequestCompression::Gzip), 16_384, "small".into(), None),
+            (Some(RequestCompression::Gzip), 0, String::new(), None),
+            (
+                Some(RequestCompression::Gzip),
+                0,
+                "pre-encoded".into(),
+                Some("identity"),
+            ),
+        ] {
+            let mut request = RequestOptions::new(reqwest::Method::POST, String::new());
+            request.body = Some(original.clone());
+            request.request_compression = compression;
+            request.compression_min_bytes = Some(threshold);
+            if let Some(encoding) = encoding {
+                request
+                    .headers
+                    .push(("Content-Encoding".into(), encoding.into()));
+            }
+            let (head, body) = capture_request(request).await;
+            assert_eq!(body, original.as_bytes());
+            assert_eq!(head.contains("content-encoding:"), encoding.is_some());
+            if let Some(encoding) = encoding {
+                assert!(head.contains(&format!("content-encoding: {encoding}\r\n")));
+            }
+        }
+    }
 
     /// Serve one plain-text body split across two writes. The second write is held until `hold`
     /// fires, so the chunk boundary lands where the caller put it.

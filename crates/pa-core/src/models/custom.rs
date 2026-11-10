@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
-use pa_types::ai::{Model, ModelCompat, ModelCost, ModelInput};
+use pa_types::ai::{Model, ModelCompat, ModelCost, ModelInput, RequestCompression};
 use pa_types::JsNumber;
 
 /// Strip `//` line comments and trailing commas, leaving strings intact.
@@ -104,6 +104,8 @@ pub struct ModelCostConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ModelDefinition {
+    pub request_compression: Option<RequestCompression>,
+    pub compression_min_bytes: Option<usize>,
     pub id: String,
     pub name: Option<String>,
     pub api: Option<String>,
@@ -121,6 +123,8 @@ pub struct ModelDefinition {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ModelOverride {
+    pub request_compression: Option<RequestCompression>,
+    pub compression_min_bytes: Option<usize>,
     pub name: Option<String>,
     pub reasoning: Option<bool>,
     pub thinking_level_map: Option<BTreeMap<String, Option<String>>>,
@@ -135,6 +139,8 @@ pub struct ModelOverride {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ProviderConfig {
+    pub request_compression: Option<RequestCompression>,
+    pub compression_min_bytes: Option<usize>,
     pub name: Option<String>,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
@@ -163,6 +169,8 @@ pub struct CustomModelsResult {
 /// Provider override config (baseUrl, compat) without request auth.
 #[derive(Debug, Clone, Default)]
 pub struct ProviderOverride {
+    pub request_compression: Option<RequestCompression>,
+    pub compression_min_bytes: Option<usize>,
     pub base_url: Option<String>,
     pub compat: Option<ModelCompat>,
 }
@@ -198,6 +206,8 @@ pub fn validate_config(
             if provider_config.base_url.is_none()
                 && provider_config.headers.is_none()
                 && provider_config.compat.is_none()
+                && provider_config.request_compression.is_none()
+                && provider_config.compression_min_bytes.is_none()
                 && !has_model_overrides
             {
                 return Err(format!(
@@ -305,6 +315,12 @@ pub fn merge_compat(base: Option<&ModelCompat>, over: Option<ModelCompat>) -> Op
 #[must_use]
 pub fn apply_model_override(model: &Model, over: &ModelOverride) -> Model {
     let mut result = model.clone();
+    if over.request_compression.is_some() {
+        result.request_compression = over.request_compression;
+    }
+    if over.compression_min_bytes.is_some() {
+        result.compression_min_bytes = over.compression_min_bytes;
+    }
     if let Some(name) = &over.name {
         result.name.clone_from(name);
     }
@@ -387,10 +403,16 @@ pub fn load_custom_models(
 
     let mut result = CustomModelsResult::default();
     for (provider_name, provider_config) in &config.providers {
-        if provider_config.base_url.is_some() || provider_config.compat.is_some() {
+        if provider_config.base_url.is_some()
+            || provider_config.compat.is_some()
+            || provider_config.request_compression.is_some()
+            || provider_config.compression_min_bytes.is_some()
+        {
             result.provider_overrides.insert(
                 provider_name.clone(),
                 ProviderOverride {
+                    request_compression: provider_config.request_compression,
+                    compression_min_bytes: provider_config.compression_min_bytes,
                     base_url: provider_config.base_url.clone(),
                     compat: merge_compat(None, compat_from_value(provider_config.compat.as_ref())),
                 },
@@ -448,6 +470,12 @@ pub fn load_custom_models(
                 // A configured `maxTokens` is explicit; the 16_384
                 // default is not, so a defaulted model stays capped.
                 max_tokens_explicit: model_def.max_tokens.is_some(),
+                request_compression: model_def
+                    .request_compression
+                    .or(provider_config.request_compression),
+                compression_min_bytes: model_def
+                    .compression_min_bytes
+                    .or(provider_config.compression_min_bytes),
                 featured: None,
                 headers: None,
                 compat,
@@ -460,6 +488,67 @@ pub fn load_custom_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compression_settings_inherit_and_override_independently() {
+        let result = load_custom_models(
+            r#"{"providers":{"custom":{
+            "baseUrl":"http://localhost", "apiKey":"unused", "api":"openai-completions",
+            "requestCompression":"gzip", "compressionMinBytes":1234,
+            "models":[{"id":"inherited"},{"id":"disabled","requestCompression":"none"},
+                {"id":"threshold","compressionMinBytes":42}],
+            "modelOverrides":{"inherited":{"requestCompression":"none","compressionMinBytes":99}}
+        }}}"#,
+            &|_| false,
+            &|_| None,
+        );
+        assert!(result.error.is_none(), "{:?}", result.error);
+        let settings: Vec<_> = result
+            .models
+            .iter()
+            .map(|model| (model.request_compression, model.compression_min_bytes))
+            .collect();
+        assert_eq!(
+            settings,
+            vec![
+                (Some(RequestCompression::Gzip), Some(1234)),
+                (Some(RequestCompression::None), Some(1234)),
+                (Some(RequestCompression::Gzip), Some(42))
+            ]
+        );
+        let overridden = apply_model_override(
+            &result.models[0],
+            &result.model_overrides["custom"]["inherited"],
+        );
+        let mut expected = result.models[0].clone();
+        expected.request_compression = Some(RequestCompression::None);
+        expected.compression_min_bytes = Some(99);
+        assert_eq!(overridden, expected);
+        let provider = &result.provider_overrides["custom"];
+        assert_eq!(
+            (provider.request_compression, provider.compression_min_bytes),
+            (Some(RequestCompression::Gzip), Some(1234))
+        );
+        let config =
+            parse_models_config(r#"{"providers":{"builtin":{"requestCompression":"gzip"}}}"#)
+                .unwrap();
+        validate_config(&config, &|_| true).unwrap();
+    }
+
+    #[test]
+    fn invalid_request_compression_is_rejected_at_every_level() {
+        for provider in [
+            serde_json::json!({"requestCompression":"brotli"}),
+            serde_json::json!({"models":[{"id":"m","requestCompression":"brotli"}]}),
+            serde_json::json!({"modelOverrides":{"m":{"requestCompression":"brotli"}}}),
+        ] {
+            let error = parse_models_config(
+                &serde_json::json!({"providers":{"custom":provider}}).to_string(),
+            )
+            .unwrap_err();
+            assert!(error.contains("unknown variant `brotli`"), "{error}");
+        }
+    }
 
     #[test]
     fn strips_comments_and_trailing_commas() {

@@ -130,6 +130,8 @@ mod tests {
                 context_window: 1,
                 max_tokens: 1,
                 max_tokens_explicit: false,
+                request_compression: None,
+                compression_min_bytes: None,
                 featured: None,
                 headers,
                 compat: None,

@@ -688,6 +688,14 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// Opt-in encoding for provider request bodies. Omitted settings preserve the original wire bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestCompression {
+    None,
+    Gzip,
+}
+
 /// Unified model descriptor for the model registry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -719,6 +727,12 @@ pub struct Model {
     /// Extra request headers. Ordered (`BTreeMap`): serializes into wire JSON (the model catalog).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headers: Option<std::collections::BTreeMap<String, String>>,
+    /// Request-body encoding; absent or `none` disables compression.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_compression: Option<RequestCompression>,
+    /// Minimum UTF-8 body size for compression; defaults to 16,384 bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression_min_bytes: Option<usize>,
     /// Compatibility overrides; auto-detected from `baseUrl` when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compat: Option<ModelCompat>,

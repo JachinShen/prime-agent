@@ -313,6 +313,8 @@ async fn run_stream(
     let url = format!("{}/responses", model.base_url.trim_end_matches('/'));
     let headers = build_headers(model, &api_key, &options, cache_session_id.as_deref());
     let mut response: HttpResponse = send(RequestOptions {
+        request_compression: model.request_compression,
+        compression_min_bytes: model.compression_min_bytes,
         method: reqwest::Method::POST,
         url,
         headers,

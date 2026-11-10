@@ -279,6 +279,8 @@ async fn run_stream(
     headers.push(("accept".into(), "text/event-stream".into()));
 
     let mut response: HttpResponse = send(RequestOptions {
+        request_compression: model.request_compression,
+        compression_min_bytes: model.compression_min_bytes,
         method: reqwest::Method::POST,
         url,
         headers,
@@ -860,6 +862,8 @@ mod tests {
             context_window: 128_000,
             max_tokens: 8192,
             max_tokens_explicit: false,
+            request_compression: None,
+            compression_min_bytes: None,
             featured: None,
             headers: None,
             compat: None,

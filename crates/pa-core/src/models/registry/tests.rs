@@ -454,3 +454,43 @@ async fn scope_readiness_timeout_keeps_models_available_before_refresh() {
         vec![existing]
     );
 }
+
+#[test]
+fn built_in_compression_settings_apply_before_model_overrides() {
+    use pa_types::ai::RequestCompression;
+    let baseline = ModelRegistry::in_memory(auth_with(&serde_json::json!({})));
+    let model = baseline
+        .get_all()
+        .iter()
+        .find(|model| model.provider == "openai")
+        .unwrap()
+        .clone();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("models.json");
+    std::fs::write(&path, serde_json::json!({"providers":{"openai":{
+        "requestCompression":"gzip", "compressionMinBytes":321,
+        "modelOverrides":{(model.id.clone()):{"requestCompression":"none","compressionMinBytes":123}}
+    }}}).to_string()).unwrap();
+    let registry = ModelRegistry::create(auth_with(&serde_json::json!({})), &path);
+    assert!(registry.get_error().is_none());
+    for actual in registry
+        .get_all()
+        .iter()
+        .filter(|model| model.provider == "openai")
+    {
+        let mut expected = baseline
+            .get_all()
+            .iter()
+            .find(|model| model.provider == "openai" && model.id == actual.id)
+            .unwrap()
+            .clone();
+        let settings = if actual.id == model.id {
+            (RequestCompression::None, 123)
+        } else {
+            (RequestCompression::Gzip, 321)
+        };
+        expected.request_compression = Some(settings.0);
+        expected.compression_min_bytes = Some(settings.1);
+        assert_eq!(actual, &expected);
+    }
+}

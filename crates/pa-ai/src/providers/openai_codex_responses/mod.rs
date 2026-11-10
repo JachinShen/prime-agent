@@ -314,6 +314,8 @@ async fn run_stream(
 
     let url = resolve_codex_url(&model.base_url);
     let mut response: HttpResponse = send(RequestOptions {
+        request_compression: model.request_compression,
+        compression_min_bytes: model.compression_min_bytes,
         method: reqwest::Method::POST,
         url,
         headers: sse_headers,
@@ -880,6 +882,8 @@ mod tests {
             context_window: 400_000,
             max_tokens: 128_000,
             max_tokens_explicit: false,
+            request_compression: None,
+            compression_min_bytes: None,
             featured: None,
             headers: None,
             compat: None,

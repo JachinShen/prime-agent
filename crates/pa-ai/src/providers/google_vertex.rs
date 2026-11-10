@@ -332,6 +332,8 @@ async fn run_stream(
     }
 
     let mut response: HttpResponse = send(RequestOptions {
+        request_compression: model.request_compression,
+        compression_min_bytes: model.compression_min_bytes,
         method: reqwest::Method::POST,
         url,
         headers,

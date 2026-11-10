@@ -30,6 +30,8 @@ reqwest = { version = "0.12", default-features = false, features = [
 # http2 there); the same version the graph resolves for reqwest/hyper.
 h2 = { version = "0.4", features = ["stream"] }
 bytes = "1"
+# Request gzip encoding belongs with the provider HTTP transport.
+flate2 = "1"
 regex = "1"
 rand = "0.8"
 base64 = "0.22"

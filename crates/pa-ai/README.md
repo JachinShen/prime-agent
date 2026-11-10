@@ -13,3 +13,8 @@ No agent loop, no tool execution, no session state, no UI. Receives/returns `pa-
 
 ## Depends on
 pa-types (one-way).
+
+The shared HTTP transport supports opt-in gzip request bodies using `flate2`.
+Encoding belongs here with provider HTTP, rather than in core configuration or
+shared vocabulary. Fast synchronous encoding uses per-request state and leaves
+unconfigured request bytes unchanged; retry ownership stays with callers.

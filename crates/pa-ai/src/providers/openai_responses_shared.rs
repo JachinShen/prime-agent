@@ -401,6 +401,8 @@ mod tests {
             context_window: 400_000,
             max_tokens: 128_000,
             max_tokens_explicit: false,
+            request_compression: None,
+            compression_min_bytes: None,
             featured: None,
             headers: None,
             compat: None,

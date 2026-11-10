@@ -117,3 +117,11 @@ revocation/errors; bytes already sent cannot be recalled. Recovery belongs to al
 live hosts sharing the agent directory and cancels when the last host disappears.
 Catch-up uses at most three delivery cycles per pending entry, honors Retry-After,
 and releases upload capacity during retry waits; exhaustion retains durable intent.
+
+Custom provider request compression in `models.json` is opt-in:
+`"requestCompression": "gzip"` enables it; omission or `"none"` disables it.
+`"compressionMinBytes"` defaults to 16384 UTF-8 bytes. Both keys can appear on
+providers, model definitions, and `modelOverrides`; each model key independently
+overrides the provider key. Unknown encoding names are rejected. Caller-supplied
+`content-encoding` always wins. Compression runs in pa-ai's shared HTTP send path;
+WebSocket and Bedrock's separate cleartext h2 transport do not use that path.

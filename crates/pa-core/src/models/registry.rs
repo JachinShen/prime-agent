@@ -552,6 +552,12 @@ impl ModelRegistry {
             .into_iter()
             .map(|mut model| {
                 if let Some(provider_override) = custom.provider_overrides.get(&model.provider) {
+                    if provider_override.request_compression.is_some() {
+                        model.request_compression = provider_override.request_compression;
+                    }
+                    if provider_override.compression_min_bytes.is_some() {
+                        model.compression_min_bytes = provider_override.compression_min_bytes;
+                    }
                     if provider_override.base_url.is_some() {
                         model.base_url = provider_override
                             .base_url
