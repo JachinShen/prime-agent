@@ -165,9 +165,6 @@ impl Worker {
         if let Err(response) = self.require_created(lane.as_str()) {
             return response;
         }
-        // These commands are resume sites: an admitted turn with
-        // `wake: "immediate"` resumes the suspension.
-        self.resume_queued_input();
         let message = payload
             .get("message")
             .and_then(Value::as_str)
@@ -194,6 +191,24 @@ impl Worker {
                 }
             }
         }
+        if let Some(row) = custom_message.as_ref() {
+            match super::external_notices::external_notice_id(row) {
+                Ok(Some(id)) => {
+                    return self
+                        .admit_external_notice(payload, lane, row.clone(), id)
+                        .unwrap_or_else(|error| {
+                            response_failure(None, lane.as_str(), &format!("{error:#}"), None)
+                        });
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return response_failure(None, lane.as_str(), &error.to_string(), None)
+                }
+            }
+        }
+        // These commands are resume sites. Replayed external notices return
+        // above without waking the runner or releasing its input suspension.
+        self.resume_queued_input();
         let mut core = self.core.lock().unwrap();
         let images = parse_prompt_images(payload);
         let item = QueuedItem {

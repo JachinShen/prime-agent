@@ -123,13 +123,11 @@ pub enum ActivityDirection {
 /// (the operator's 2026-10-16 spec).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActivityDock {
-    /// The directly-running children right now (one addend of the dock's
-    /// single running total).
+    /// The directly-running children right now.
     pub subagents_running_direct: usize,
-    /// The further running descendants below them: the total's other
-    /// addend. Idle and dead rows never count.
+    /// The further running descendants below them.
     pub subagents_running_nested: usize,
-    /// The idle descendants (the expanded subagents row's breakdown).
+    /// The resident idle descendants, included in the collapsed total.
     pub subagents_idle: usize,
     /// The inactive descendants (the expanded subagents row's breakdown).
     pub subagents_inactive: usize,
@@ -752,9 +750,10 @@ pub fn render_activity_dock_segments(
             theme.fg_span(color, text.to_string()),
         ]
     };
-    // The live-only number: actively-running subagents right now, direct
-    // children and nested descendants together — ONE number.
+    // Count resident descendants: a settled agent remains available for follow-up.
+    // Inactive registry rows stay in the expanded breakdown.
     let running = dock.subagents_running_direct + dock.subagents_running_nested;
+    let subagents = running + dock.subagents_idle;
     let shells = dock.shells.len();
     let factory = dock.factory_counts;
     let mut line = vec![Span::raw(" ")];
@@ -769,10 +768,16 @@ pub fn render_activity_dock_segments(
         match group {
             ActivityGroup::Subagents => {
                 line.push(theme.fg_span(
-                    activity_color(running),
+                    if running > 0 {
+                        ThemeColor::Success
+                    } else if dock.subagents_idle > 0 {
+                        ThemeColor::Warning
+                    } else {
+                        ThemeColor::Muted
+                    },
                     format!(
-                        "◆ {running} subagent{}",
-                        if running == 1 { "" } else { "s" }
+                        "◆ {subagents} subagent{}",
+                        if subagents == 1 { "" } else { "s" }
                     ),
                 ));
             }

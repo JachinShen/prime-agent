@@ -14,6 +14,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
+use pa_types::daemon::external_subagent::{ExternalSubagentInfo, ExternalSubagentWorktreeRequest};
 use serde_json::{json, Map, Value};
 
 use crate::kernel::rlm_runtime::{
@@ -39,7 +40,9 @@ pub struct RlmSpawnHandle {
     pub rlm_child_id: String,
     pub name: String,
     pub session_dir: String,
-    pub model: String,
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalSubagentInfo>,
 }
 
 /// `rlm.create_session` handle: one resident depth-0 daemon session.
@@ -81,6 +84,8 @@ pub struct RlmSubagentEntry {
     pub last_activity_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activity_stale_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalSubagentInfo>,
 }
 
 /// Live child activity projected onto the roster row.
@@ -129,6 +134,8 @@ pub struct RlmChildResult {
     pub tool_use_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replied_since_task: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalSubagentInfo>,
 }
 
 // Requests into the host
@@ -143,6 +150,12 @@ pub struct RlmSpawnRequest {
     pub model: Option<String>,
     /// Validated thinking level; the host checks model support.
     pub thinking: Option<String>,
+    /// Herdr agent kind; absent for the Prime worker backend.
+    pub agent: Option<String>,
+    /// Literal argv entries for the external agent's startup.
+    pub agent_args: Vec<String>,
+    /// Create a Herdr-managed Git worktree before starting the external agent.
+    pub worktree: Option<ExternalSubagentWorktreeRequest>,
     /// The parent's in-flight turn request the spawn anchors to (TS
     /// `spawnedByRequestId`): `None` for a spawn outside an active run.
     pub spawned_by_request_id: Option<String>,
@@ -178,6 +191,18 @@ pub trait RlmSubagentHost: Send + Sync {
     /// Rename the current session (`session_id` absent) or one direct
     /// child (TS `rlm.rename`); answers the applied name.
     fn rename(&self, name: String, session_id: Option<String>) -> RlmHostFuture<String>;
+    /// Control an owned external pane; implementations must validate its live identity.
+    fn control_subagent(
+        &self,
+        _target: String,
+        _action: String,
+        _keys: Vec<String>,
+        _lines: u32,
+    ) -> RlmHostFuture<Value> {
+        Box::pin(async {
+            anyhow::bail!("This session does not support external subagent controls")
+        })
+    }
 }
 
 /// Host behavior for sessions with no child runtime: truthful empties and the
@@ -513,6 +538,7 @@ pub fn register_rlm_host_handlers(handlers: &mut HostRequestHandlers, bridge: &A
     register_delete_subagent(handlers, bridge);
     register_collect(handlers, bridge);
     register_rename(handlers, bridge);
+    register_subagent_control(handlers, bridge);
 }
 
 fn register_find_models(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>) {
@@ -632,7 +658,9 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
                 // assistant row (persisted at `message_end` before tool
                 // execution) is the target every child-usage attribution
                 // folds into.
-                bridge.usage.register_spawn(&handle.rlm_child_id).await;
+                if handle.external.is_none() {
+                    bridge.usage.register_spawn(&handle.rlm_child_id).await;
+                }
                 serde_json::to_value(&handle).map_err(anyhow::Error::new)
             })
         }),
@@ -644,15 +672,92 @@ fn register_run(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>)
 fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmSpawnRequest> {
     const OPERATION: &str = "rlm.spawn";
     let kwargs = kwargs_from_payload(data);
-    reject_unsupported_kwargs(&kwargs, OPERATION, &["name", "model", "thinking"])?;
+    reject_unsupported_kwargs(
+        &kwargs,
+        OPERATION,
+        &[
+            "name",
+            "model",
+            "thinking",
+            "agent",
+            "agent_args",
+            "worktree",
+            "base",
+        ],
+    )?;
     let name = optional_string_kwarg(&kwargs, "name", OPERATION)?;
     let name = normalize_requested_rlm_subagent_session_name(name, OPERATION)?;
     if let Some(name) = &name {
         assert_direct_agent_message_target(name)?;
     }
+    let agent = optional_string_kwarg(&kwargs, "agent", OPERATION)?;
+    let agent = match agent.map(str::trim) {
+        None | Some("prime") => None,
+        Some(kind)
+            if !kind.is_empty()
+                && kind.len() <= 64
+                && kind.starts_with(|ch: char| ch.is_ascii_lowercase())
+                && kind.chars().all(|ch| {
+                    ch.is_ascii_lowercase() || ch.is_ascii_digit() || "_-".contains(ch)
+                }) =>
+        {
+            Some(kind.to_string())
+        }
+        Some(_) => anyhow::bail!("rlm.spawn agent must be a lowercase Herdr agent kind or prime"),
+    };
+    let agent_args = match kwargs.get("agent_args") {
+        None => Vec::new(),
+        Some(Value::Array(args)) => args
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|arg| !arg.contains('\0'))
+                    .map(str::to_string)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "rlm.spawn agent_args must be a list of strings without NUL characters"
+                        )
+                    })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?,
+        Some(_) => anyhow::bail!("rlm.spawn agent_args must be a list of strings"),
+    };
+    if agent.is_none() && !agent_args.is_empty() {
+        anyhow::bail!("rlm.spawn agent_args requires an external agent");
+    }
+    let branch = match kwargs.get("worktree") {
+        None | Some(Value::Bool(false)) => None,
+        Some(Value::Bool(true)) => Some(None),
+        Some(Value::String(branch)) if !branch.trim().is_empty() && !branch.contains('\0') => {
+            Some(Some(branch.clone()))
+        }
+        Some(_) => anyhow::bail!(
+            "rlm.spawn worktree must be a boolean or nonempty branch name without NUL characters"
+        ),
+    };
+    let base = optional_string_kwarg(&kwargs, "base", OPERATION)?;
+    if base.is_some_and(|base| base.trim().is_empty() || base.contains('\0')) {
+        anyhow::bail!("rlm.spawn base must be a nonempty Git reference without NUL characters");
+    }
+    if base.is_some() && branch.is_none() {
+        anyhow::bail!("rlm.spawn base requires worktree");
+    }
+    if branch.is_some() && agent.is_none() {
+        anyhow::bail!("rlm.spawn worktree requires an external agent");
+    }
+    let worktree = branch.map(|branch| ExternalSubagentWorktreeRequest {
+        branch,
+        base: base.map(str::to_string),
+    });
     let model = optional_string_kwarg(&kwargs, "model", OPERATION)?;
-    let model = normalize_requested_rlm_subagent_model(model, OPERATION)?;
     let thinking = optional_string_kwarg(&kwargs, "thinking", OPERATION)?;
+    if agent.is_some() && (model.is_some() || thinking.is_some()) {
+        anyhow::bail!(
+            "rlm.spawn model/thinking select Prime models; use agent_args for an external agent"
+        );
+    }
+    let model = normalize_requested_rlm_subagent_model(model, OPERATION)?;
     let thinking =
         normalize_requested_rlm_subagent_thinking_level(thinking, OPERATION)?.map(String::from);
     Ok(RlmSpawnRequest {
@@ -660,8 +765,60 @@ fn spawn_request_from_payload(prompt: &str, data: &Value) -> anyhow::Result<RlmS
         name,
         model,
         thinking,
+        agent,
+        agent_args,
+        worktree,
         spawned_by_request_id: None,
     })
+}
+
+/// RFC-0001: Validate controls before the host can touch an external pane.
+fn register_subagent_control(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>) {
+    let host = Arc::clone(&bridge.host);
+    handlers.register(
+        "rlm.subagent.control",
+        host_handler(move |payload| {
+            let host = Arc::clone(&host);
+            Box::pin(async move {
+                let data = &payload.data;
+                let target = data
+                    .get("target")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("rlm.subagent.control target must be a non-empty string"))?;
+                let target = assert_direct_agent_message_target(target.trim())?;
+                let action = data
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .filter(|value| matches!(*value, "read" | "keys" | "focus" | "stop" | "close"))
+                    .ok_or_else(|| anyhow::anyhow!("rlm.subagent.control action must be read, keys, focus, stop, or close"))?;
+                let keys = match data.get("keys") {
+                    None => Vec::new(),
+                    Some(Value::Array(keys)) => keys
+                        .iter()
+                        .map(|key| {
+                            key.as_str()
+                                .filter(|key| !key.is_empty() && !key.contains('\0'))
+                                .map(str::to_string)
+                                .ok_or_else(|| anyhow::anyhow!("rlm.subagent.control keys must contain non-empty strings without NUL characters"))
+                        })
+                        .collect::<anyhow::Result<Vec<_>>>()?,
+                    Some(_) => anyhow::bail!("rlm.subagent.control keys must be a list of strings"),
+                };
+                if (action == "keys") == keys.is_empty() {
+                    anyhow::bail!("rlm.subagent.control keys are required only for the keys action");
+                }
+                let lines = match data.get("lines") {
+                    None => 80,
+                    Some(value) => value
+                        .as_u64()
+                        .filter(|lines| (1..=2_000).contains(lines))
+                        .ok_or_else(|| anyhow::anyhow!("rlm.subagent.control lines must be between 1 and 2000"))? as u32,
+                };
+                host.control_subagent(target, action.to_string(), keys, lines).await
+            })
+        }),
+    );
 }
 
 fn register_create_session(handlers: &mut HostRequestHandlers, bridge: &Arc<RlmHostBridge>) {
@@ -916,7 +1073,8 @@ mod tests {
                     rlm_child_id: "sub-1".into(),
                     name: "worker".into(),
                     session_dir: "/tmp/sub-1".into(),
-                    model: "p/m".into(),
+                    model: Some("p/m".into()),
+                    external: None,
                 })
             })
         }
@@ -957,6 +1115,7 @@ mod tests {
                     label: Some("child agent".into()),
                     last_activity_at: Some(1_000),
                     activity_stale_ms: None,
+                    external: None,
                 }])
             })
         }
@@ -981,6 +1140,7 @@ mod tests {
                         label: None,
                         last_activity_at: None,
                         activity_stale_ms: None,
+                        external: None,
                     },
                     outcome: Some("deleted"),
                 })
@@ -1006,6 +1166,7 @@ mod tests {
                     duration_ms: Some(2_000),
                     tool_use_count: Some(3),
                     replied_since_task: Some(true),
+                    external: None,
                 }])
             })
         }
@@ -1380,6 +1541,114 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.to_string(), "rlm.spawn name must be a string");
+    }
+
+    #[test]
+    fn external_spawn_preserves_literal_args_and_rejects_native_options() {
+        let request = spawn_request_from_payload(
+            "review",
+            &json!({"kwargs":{"name":"review", "agent":"codex", "agent_args":["-m", "my-model", "$(literal)"]}}),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                request.agent,
+                request.agent_args,
+                request.model,
+                request.thinking
+            ),
+            (
+                Some("codex".into()),
+                vec!["-m".into(), "my-model".into(), "$(literal)".into()],
+                None,
+                None
+            )
+        );
+        for kwargs in [
+            json!({"agent":"codex", "model":"p/m"}),
+            json!({"agent":"codex", "thinking":"high"}),
+            json!({"agent":"codex", "agent_args":"-m model"}),
+            json!({"agent":"codex", "agent_args":[42]}),
+            json!({"agent":"codex", "agent_args":["\u{0000}"]}),
+            json!({"agent":"../codex"}),
+            json!({"agent_args":["--arg"]}),
+        ] {
+            assert!(spawn_request_from_payload("review", &json!({"kwargs":kwargs})).is_err());
+        }
+        let request =
+            spawn_request_from_payload("review", &json!({"kwargs":{"agent":"prime"}})).unwrap();
+        assert_eq!((request.agent, request.agent_args), (None, Vec::new()));
+    }
+
+    #[test]
+    fn external_worktree_options_are_validated_before_dispatch() {
+        for (value, branch) in [
+            (json!(true), None),
+            (json!("task/review"), Some("task/review".into())),
+        ] {
+            let request = spawn_request_from_payload(
+                "review",
+                &json!({"kwargs": {
+                    "agent":"codex", "worktree":value, "base":"HEAD~1"
+                }}),
+            )
+            .unwrap();
+            assert_eq!(
+                request.worktree,
+                Some(ExternalSubagentWorktreeRequest {
+                    branch,
+                    base: Some("HEAD~1".into())
+                })
+            );
+        }
+        for kwargs in [
+            json!({"worktree":true}),
+            json!({"agent":"prime","worktree":true}),
+            json!({"agent":"codex","worktree":1}),
+            json!({"agent":"codex","worktree":" "}),
+            json!({"agent":"codex","worktree":"bad\u{0000}branch"}),
+            json!({"agent":"codex","base":"HEAD"}),
+            json!({"agent":"codex","worktree":true,"base":""}),
+            json!({"agent":"codex","worktree":true,"base":42}),
+        ] {
+            assert!(spawn_request_from_payload("review", &json!({"kwargs":kwargs})).is_err());
+        }
+        let request =
+            spawn_request_from_payload("review", &json!({"kwargs":{"worktree":false}})).unwrap();
+        assert_eq!(request.worktree, None);
+    }
+
+    #[tokio::test]
+    async fn external_controls_validate_before_dispatch() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let wiring = wired(dir.path(), Some(RecordingHost::new()));
+        for payload in [
+            json!({"target":"all", "action":"focus"}),
+            json!({"target":"sub-1", "action":"rm"}),
+            json!({"target":"sub-1", "action":"keys", "keys":[]}),
+            json!({"target":"sub-1", "action":"focus", "keys":["y"]}),
+            json!({"target":"sub-1", "action":"read", "lines":0}),
+            json!({"target":"sub-1", "action":"read", "lines":2001}),
+        ] {
+            let error = call(&wiring, "rlm.subagent.control", payload)
+                .await
+                .unwrap_err();
+            assert_ne!(
+                error.to_string(),
+                "This session does not support external subagent controls"
+            );
+        }
+        let error = call(
+            &wiring,
+            "rlm.subagent.control",
+            json!({"target":"sub-1", "action":"read", "lines":80}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "This session does not support external subagent controls"
+        );
     }
 
     #[tokio::test]

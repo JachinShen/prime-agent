@@ -350,6 +350,7 @@ mod tests {
         let engine: Arc<dyn crate::engine::SessionEngine> =
             Arc::new(crate::engine::ScriptedEngine::default());
         let queue = RosterPushQueue::spawn(crate::worker::RosterPushContext {
+            children: None,
             core: Arc::new(Mutex::new(crate::worker::SessionCore::test_core(
                 None,
                 "/tmp".to_string(),
@@ -427,6 +428,7 @@ mod tests {
             }
         });
         let queue = RosterPushQueue::spawn(crate::worker::RosterPushContext {
+            children: None,
             core: Arc::new(Mutex::new(SessionCore::test_core(None, "/tmp".to_string()))),
             engine: Arc::new(crate::engine::ScriptedEngine::default()),
             user_bash: Arc::new(crate::user_bash::UserBash::new()),

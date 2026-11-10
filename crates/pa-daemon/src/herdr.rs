@@ -16,13 +16,14 @@
 //! session `create` (TS `DAEMON_CLIENT_ENV_KEYS`), the supervisor rides
 //! them on the worker's durable create command, and the worker resolves
 //! them from the create payload here. Every session is its own worker
-//! process, so its reporter owns its pane alone: a daemon (supervisor)
+//! process; its latest interactive client owns the reporter binding.
+//! Detaching that client silences the reporter, so a daemon (supervisor)
 //! booted outside Herdr, or in one Herdr tab, cannot bleed its boot
 //! context into sessions later created in other panes — the TS bug
 //! class this port does not reproduce.
 //!
-//! The wire contract (one JSON line per request, closed after the first
-//! response byte, an error, or 500 ms):
+//! The wire contract (one JSON line per request and acknowledgement,
+//! with each transport phase bounded to 500 ms):
 //!
 //! ```json
 //! {"id":"herdr:pi:<ms>:<rand>","method":"pane.report_agent","params":{"pane_id":"<HERDR_PANE_ID>","source":"herdr:pi","agent":"prime-agent","state":"working","seq":1780000000000000,"agent_session_path":"/home/me/.prime/agent/sessions/<id>.jsonl"}}
@@ -33,6 +34,8 @@
 //! (seeded `now_ms * 1000`; a successor reporter after a session
 //! replacement never restarts below a used value — Herdr drops
 //! lower-seq reports per source, which would stick a pane at working).
+//! A release uses the reserved sequence immediately after its own last
+//! acknowledged report, so a retiring worker cannot clear a successor.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,8 +44,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use serde_json::{json, Map, Value};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 /// The allowlist of client env vars the connector consumes (TS
 /// `DAEMON_CLIENT_ENV_KEYS` — the shared wire contract, in `pa-types` so
@@ -59,9 +63,9 @@ const IDLE_DEBOUNCE_ENV: &str = "HERDR_PI_IDLE_DEBOUNCE_MS";
 const RETRY_GRACE_ENV: &str = "HERDR_PI_RETRY_GRACE_MS";
 const DEFAULT_IDLE_DEBOUNCE_MS: u64 = 250;
 const DEFAULT_RETRY_GRACE_MS: u64 = 2500;
-/// The send timeout: one line, then close after the first response byte,
-/// an error, or this window (the TS `finish` arm).
+/// Each transport phase has its own bound; reporting never blocks paint.
 const SEND_TIMEOUT_MS: u64 = 500;
+const MAX_ACK_BYTES: u64 = 64 * 1024;
 
 /// The reporter identity on every report (TS main `herdr:pi` source;
 /// `herdr integration install pi` reports under the same pair).
@@ -191,7 +195,10 @@ fn next_report_seq() -> u64 {
         }
     }
     loop {
-        let next = (current + 1).max(floor);
+        // Reserve the following sequence for this report's eventual
+        // release. A retiring worker must not mint a fresh timestamp
+        // that could erase a different worker's newer pane report.
+        let next = (current + 2).max(floor);
         match REPORT_SEQ.compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed) {
             Ok(_) => return next,
             Err(seen) => current = seen,
@@ -214,6 +221,7 @@ struct ReporterState {
     failure_message: Option<String>,
     last_state: Option<PaneState>,
     last_message: Option<String>,
+    last_report_seq: Option<u64>,
     pending: Option<PendingReport>,
     session_ref: HerdrSessionRef,
     /// The idle debounce deadline (a queued-work turn end).
@@ -262,6 +270,9 @@ enum Signal {
 #[derive(Clone, Default)]
 pub(crate) struct HerdrReporter {
     tx: Option<std::sync::Arc<tokio::sync::mpsc::UnboundedSender<Signal>>>,
+    /// The interactive client that currently presents this session.
+    /// Observers carry no pane env and never become its owner.
+    pub(crate) client_id: Option<String>,
 }
 
 impl HerdrReporter {
@@ -287,6 +298,7 @@ impl HerdrReporter {
         ));
         Self {
             tx: Some(std::sync::Arc::new(tx)),
+            client_id: None,
         }
     }
 
@@ -359,15 +371,15 @@ async fn release_pane(
     // fence gates it: a target that never accepted reports (or a
     // check that hung) releases nothing, and the ack still fires.
     let target = herdr_socket_target(&config.socket_path, cfg!(windows));
-    let reached = if *fence_hung {
-        false
-    } else {
+    let reached = if let Some(seq) = state.last_report_seq.filter(|_| !*fence_hung) {
         let verdict = pane_socket_acceptable(&target).await;
         if matches!(verdict, FenceVerdict::TimedOut) {
             *fence_hung = true;
         }
         matches!(verdict, FenceVerdict::Accepted)
-            && send_request(&target, release_request(&config.pane_id, next_report_seq())).await
+            && send_request(&target, release_request(&config.pane_id, seq + 1)).await
+    } else {
+        false
     };
     let _ = reached;
     let _ = done.send(());
@@ -398,6 +410,7 @@ async fn run_reporter(
         failure_message: None,
         last_state: None,
         last_message: None,
+        last_report_seq: None,
         pending: None,
         session_ref,
         idle_deadline: None,
@@ -480,12 +493,13 @@ async fn run_reporter(
                 break;
             };
             let target = herdr_socket_target(&config.socket_path, cfg!(windows));
+            let seq = next_report_seq();
             let request = report_request(
                 &config.pane_id,
                 report.state,
                 report.message.as_deref(),
                 &state.session_ref,
-                next_report_seq(),
+                seq,
             );
             let reached_wire = if fence_hung {
                 false
@@ -497,12 +511,13 @@ async fn run_reporter(
                 matches!(verdict, FenceVerdict::Accepted) && send_request(&target, request).await
             };
             if reached_wire {
-                // The state reached the wire (best-effort): the
-                // publish-dedup keys on it. A failed or refused send
+                // Herdr acknowledged this state: publish-dedup keys
+                // on it. A failed or refused send
                 // leaves it unpublished, so it re-queues at the next
                 // boundary instead of being deduped away.
                 state.last_state = Some(report.state);
                 state.last_message = report.message;
+                state.last_report_seq = Some(seq);
             }
             if is_stale() {
                 return;
@@ -841,42 +856,64 @@ fn pane_socket_acceptable_blocking(socket_target: &str) -> bool {
     acceptable
 }
 
-/// Send one request line: connect, write, and finish on the first
-/// response byte, an error, a close, or the 500 ms window (the TS
-/// `sendRequest`). Failures are silent — the pane state API is
-/// best-effort, and a down daemon must never wedge a session.
+/// Confirm a complete, id-matched acknowledgement. Rejected and broken
+/// responses stay unpublished and produce a diagnostic in the worker log.
 async fn send_request(socket_target: &str, request: Value) -> bool {
-    // Every phase of the one-shot request is time-bounded — connect,
-    // write, and the response's first byte — so a wedged peer (a socket
-    // that accepts but never reads) can never stall the reporter task
-    // and starve later states or the release.
-    let connected = tokio::time::timeout(
-        Duration::from_millis(SEND_TIMEOUT_MS),
-        pa_types::platform::transport::connect_transport(std::path::Path::new(socket_target)),
-    )
+    let timeout = Duration::from_millis(SEND_TIMEOUT_MS);
+    let result = async {
+        let stream = tokio::time::timeout(
+            timeout,
+            pa_types::platform::transport::connect_transport(std::path::Path::new(socket_target)),
+        )
+        .await
+        .context("connect timed out")?
+        .context("connect failed")?;
+        let (reader, mut writer) = stream.split();
+        let line = format!("{request}\n");
+        tokio::time::timeout(timeout, async {
+            writer.write_all(line.as_bytes()).await?;
+            writer.shutdown().await
+        })
+        .await
+        .context("write timed out")?
+        .context("write failed")?;
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            timeout,
+            BufReader::new(reader.take(MAX_ACK_BYTES)).read_until(b'\n', &mut response),
+        )
+        .await
+        .context("acknowledgement timed out")?
+        .context("acknowledgement read failed")?;
+        anyhow::ensure!(
+            response.last() == Some(&b'\n'),
+            "incomplete or oversized acknowledgement"
+        );
+        let response: Value =
+            serde_json::from_slice(&response).context("invalid acknowledgement JSON")?;
+        anyhow::ensure!(
+            request.get("id").is_some() && response.get("id") == request.get("id"),
+            "acknowledgement id mismatch"
+        );
+        if let Some(error) = response.get("error").filter(|error| !error.is_null()) {
+            anyhow::bail!("Herdr rejected the request: {error}");
+        }
+        anyhow::ensure!(
+            response
+                .get("result")
+                .is_some_and(|result| !result.is_null()),
+            "acknowledgement has no result"
+        );
+        Ok::<(), anyhow::Error>(())
+    }
     .await;
-    let Ok(Ok(stream)) = connected else {
-        return false;
-    };
-    let (mut reader, mut writer) = stream.split();
-    let line = format!("{request}\n");
-    let written = tokio::time::timeout(
-        Duration::from_millis(SEND_TIMEOUT_MS),
-        writer.write_all(line.as_bytes()),
-    )
-    .await;
-    if !matches!(written, Ok(Ok(()))) {
+    if let Err(error) = result {
+        eprintln!(
+            "herdr: {} for pane {} failed: {error:#}",
+            request["method"], request["params"]["pane_id"]
+        );
         return false;
     }
-    let _ = writer.shutdown().await;
-    let mut byte = [0u8; 1];
-    let _ = tokio::time::timeout(
-        Duration::from_millis(SEND_TIMEOUT_MS),
-        reader.read_exact(&mut byte),
-    )
-    .await;
-    // The request left the process (best-effort: whether the peer read
-    // it is unknowable, but the write succeeded).
     true
 }
 
@@ -929,6 +966,68 @@ pub(crate) fn error_hold_message(messages: &[Value]) -> Option<String> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_late_quit_cannot_release_a_newer_workers_pane() {
+        let socket_path = temp_socket("late-quit");
+        let (requests, server) = fake_herdr(&socket_path);
+        let config = HerdrConfig::from_env(&pane_env(&socket_path, "w1:p1")).unwrap();
+        let old_ref = HerdrSessionRef::new(None, Some("old".to_string()));
+        let (old, _) = start_reporter(config.clone(), old_ref.clone());
+        old.session_started(false, old_ref);
+        wait_for_requests(&requests, 1).await;
+        let new_ref = HerdrSessionRef::new(None, Some("new".to_string()));
+        let (new, _) = start_reporter(config, new_ref.clone());
+        new.session_started(true, new_ref);
+        wait_for_requests(&requests, 2).await;
+        old.release().await;
+        let frames = requests.lock().unwrap().clone();
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[2]["method"], "pane.release_agent");
+        assert!(
+            frames[0]["params"]["seq"].as_u64().unwrap()
+                < frames[2]["params"]["seq"].as_u64().unwrap()
+                && frames[2]["params"]["seq"].as_u64().unwrap()
+                    < frames[1]["params"]["seq"].as_u64().unwrap(),
+            "a release must retire only its own report: {frames:?}"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn rejected_or_invalid_acknowledgements_are_not_delivery_success() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let socket_path = temp_socket("rejected-ack");
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+        let server = tokio::spawn(async move {
+            for response in [
+                "{\"id\":\"probe\",\"error\":{\"code\":\"resume_not_accepted\",\"message\":\"not the pane owner\"}}\n",
+                "{\"id\":\"other\",\"result\":{\"type\":\"ok\"}}\n",
+                "{\"id\":\"probe\",\"result\":{\"type\":\"ok\"}}",
+                "not json\n",
+                "{}\n",
+            ] {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let (reader, mut writer) = stream.split();
+                let mut line = String::new();
+                BufReader::new(reader).read_line(&mut line).await.unwrap();
+                writer.write_all(response.as_bytes()).await.unwrap();
+                writer.shutdown().await.unwrap();
+            }
+        });
+        for _ in 0..5 {
+            assert!(
+                !send_request(
+                    socket_path.to_str().unwrap(),
+                    json!({"id":"probe", "method":"pane.report_agent", "params":{}})
+                )
+                .await,
+                "an error, mismatched, incomplete, or malformed response is not an acknowledgement"
+            );
+        }
+        server.await.unwrap();
+    }
 
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs

@@ -1,0 +1,155 @@
+{
+  "widths": [
+    48,
+    56
+  ],
+  "rows": [
+    {
+      "summary": {
+        "id": "idle",
+        "sessionId": "idle",
+        "sessionName": "Review API",
+        "cwd": "/tmp",
+        "sessionFile": "/x/idle.jsonl",
+        "runtimeKind": "top-level",
+        "activity": "idle",
+        "isSessionActive": false,
+        "isStreaming": false,
+        "isCompacting": false,
+        "messageCount": 2,
+        "sessionActions": {
+          "queuedCount": 0,
+          "steering": [],
+          "followUps": []
+        },
+        "created": "2024-01-01T00:00:00.000Z",
+        "modified": "2024-01-01T00:00:00.000Z",
+        "model": {
+          "provider": "test",
+          "id": "model"
+        },
+        "activeSessionId": "idle-live"
+      },
+      "kind": "agent",
+      "section": "idle",
+      "identity": "file:/x/idle.jsonl",
+      "parentIdentity": null,
+      "title": "Review API",
+      "depth": 0,
+      "model": "model",
+      "cost": 1.25,
+      "age": "1s"
+    },
+    {
+      "summary": {
+        "id": "running",
+        "sessionId": "running",
+        "sessionName": "检查相同字符 sheet",
+        "cwd": "/tmp",
+        "sessionFile": "/x/running.jsonl",
+        "runtimeKind": "top-level",
+        "activity": "working",
+        "isSessionActive": true,
+        "isStreaming": false,
+        "isCompacting": false,
+        "messageCount": 2,
+        "sessionActions": {
+          "queuedCount": 0,
+          "steering": [],
+          "followUps": []
+        },
+        "created": "2024-01-01T00:00:00.000Z",
+        "modified": "2024-01-01T00:00:00.000Z",
+        "model": {
+          "provider": "test",
+          "id": "model"
+        },
+        "activeSessionId": "running-live"
+      },
+      "kind": "agent",
+      "section": "running",
+      "identity": "file:/x/running.jsonl",
+      "parentIdentity": null,
+      "title": "检查相同字符 sheet",
+      "depth": 0,
+      "model": "model",
+      "cost": 1.25,
+      "age": "1s"
+    },
+    {
+      "summary": {
+        "id": "saved",
+        "sessionId": "saved",
+        "sessionName": "Saved notes",
+        "cwd": "/tmp",
+        "sessionFile": "/x/saved.jsonl",
+        "runtimeKind": "top-level",
+        "activity": "idle",
+        "isSessionActive": false,
+        "isStreaming": false,
+        "isCompacting": false,
+        "messageCount": 2,
+        "sessionActions": {
+          "queuedCount": 0,
+          "steering": [],
+          "followUps": []
+        },
+        "created": "2024-01-01T00:00:00.000Z",
+        "modified": "2024-01-01T00:00:00.000Z",
+        "model": {
+          "provider": "test",
+          "id": "model"
+        }
+      },
+      "kind": "agent",
+      "section": "inactive",
+      "identity": "file:/x/saved.jsonl",
+      "parentIdentity": null,
+      "title": "Saved notes",
+      "depth": 0,
+      "model": "model",
+      "cost": 1.25,
+      "age": "1s"
+    },
+    {
+      "summary": {
+        "id": "child",
+        "sessionId": "child",
+        "sessionName": "Native child",
+        "cwd": "/tmp",
+        "sessionFile": "/x/child.jsonl",
+        "runtimeKind": "subagent",
+        "activity": "idle",
+        "isSessionActive": false,
+        "isStreaming": false,
+        "isCompacting": false,
+        "messageCount": 2,
+        "sessionActions": {
+          "queuedCount": 0,
+          "steering": [],
+          "followUps": []
+        },
+        "created": "2024-01-01T00:00:00.000Z",
+        "modified": "2024-01-01T00:00:00.000Z",
+        "model": {
+          "provider": "test",
+          "id": "model"
+        },
+        "activeSessionId": "child-live",
+        "rlmChildId": "review",
+        "parentSessionId": "idle",
+        "parentSessionPath": "/x/idle.jsonl",
+        "parentActiveSessionId": "idle-live"
+      },
+      "kind": "subagent",
+      "section": "idle",
+      "identity": "agent:/x/idle.jsonl#review",
+      "parentIdentity": "file:/x/idle.jsonl",
+      "title": "Native child",
+      "depth": 1,
+      "model": "model",
+      "cost": 1.25,
+      "age": "1s"
+    }
+  ]
+}

@@ -66,6 +66,65 @@ impl Worker {
         }
     }
 
+    /// External runtimes are controlled by the authenticated parent worker, never by the TUI.
+    pub(crate) async fn handle_control_external_subagent(&self, payload: &Value) -> DaemonResponse {
+        const COMMAND: &str = "control_external_subagent";
+        if let Err(response) = self.require_created(COMMAND) {
+            return response;
+        }
+        let Some(children) = self
+            .agent_engine
+            .as_ref()
+            .and_then(|engine| engine.children.as_ref())
+        else {
+            return response_failure(
+                None,
+                COMMAND,
+                "External subagents are unavailable in this session",
+                None,
+            );
+        };
+        let result = async {
+            let target = payload
+                .get("target")
+                .and_then(Value::as_str)
+                .filter(|target| !target.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("control_external_subagent requires a target"))?;
+            let action = payload
+                .get("action")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("control_external_subagent requires an action"))?;
+            if action == "send" {
+                let message = payload
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("External subagent send requires a message"))?;
+                let receipt = children
+                    .send_external(target, message)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("Unknown external subagent: {target}"))?;
+                return Ok(json!({"id": receipt.id, "target": receipt.target,
+                    "deliveryStatus": receipt.delivery_status.as_str(), "queuedAt": receipt.queued_at}));
+            }
+            let keys = payload
+                .get("keys")
+                .map(|keys| serde_json::from_value(keys.clone()))
+                .transpose()?
+                .unwrap_or_default();
+            let lines = payload
+                .get("lines")
+                .map(|lines| serde_json::from_value(lines.clone()))
+                .transpose()?
+                .unwrap_or(80);
+            children.control_external(target, action, keys, lines).await
+        }
+        .await;
+        match result {
+            Ok(data) => response_success(None, COMMAND, Some(data)),
+            Err(error) => response_failure(None, COMMAND, &format!("{error:#}"), None),
+        }
+    }
+
     /// `set_rlm_max_depth`: set the session's recursion bound, optionally persisting it as the
     /// global settings default. The response is the TS `SetRlmMaxDepthResult` wire object.
     pub(crate) async fn handle_set_rlm_max_depth(&self, payload: &Value) -> DaemonResponse {
@@ -126,6 +185,24 @@ mod tests {
             .await;
         assert!(created.success, "create failed: {created:?}");
         worker
+    }
+
+    #[tokio::test]
+    async fn external_control_surfaces_unavailable_host_instead_of_attaching_a_child_session() {
+        let worker = created_worker().await;
+        let response = worker
+            .dispatch(
+                "control_external_subagent",
+                &json!({
+                    "activeSessionId": "rlm-session", "target": "review", "action": "focus"
+                }),
+            )
+            .await;
+        assert!(!response.success);
+        assert_eq!(
+            response.error.as_deref(),
+            Some("External subagents are unavailable in this session")
+        );
     }
 
     #[tokio::test]

@@ -149,6 +149,27 @@ impl ModelRefusalTelemetry {
             client, surface, provider, model_id,
         );
     }
+    /// Share the worker's telemetry client for external child lifecycle events.
+    /// Delivery remains fire-and-forget and respects session/project opt-outs.
+    pub(crate) fn track_external(&self, event: pa_telemetry::ExternalSubagentEvent, cwd: &Path) {
+        if !self.enabled {
+            return;
+        }
+        let settings = pa_core::settings::SettingsManager::create(cwd, &self.agent_dir);
+        if !pa_core::session_engine::telemetry::telemetry_switch(&settings).enabled() {
+            return;
+        }
+        let mut slot = self
+            .client
+            .lock()
+            .expect("external subagent telemetry lock");
+        if slot.as_ref().is_none_or(|(bound_cwd, _)| bound_cwd != cwd) {
+            let client =
+                pa_core::session_engine::telemetry::build_client(&settings, &self.agent_dir);
+            *slot = Some((cwd.to_path_buf(), client));
+        }
+        event.track(&slot.as_ref().expect("client bound").1);
+    }
 }
 
 #[cfg(test)]

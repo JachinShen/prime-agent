@@ -918,12 +918,10 @@ impl Worker {
             "id": client_id,
             "capabilities": echoed_client_capabilities.unwrap_or(capabilities),
         });
-        // Client-env adoption (TS `adoptClientEnv`): a pane opening an
-        // env-less session (e.g. cron-created) hands its Herdr identity
-        // to the reporter — adopt-if-absent, never overwrite: a session
-        // that already reports for its creating pane keeps it, so
-        // watchers must not send env at all (the client contract) and a
-        // second pane cannot steal the identity mid-session.
+        // The newest interactive attach owns the pane binding. A live
+        // worker can outlast its original terminal: resuming it must
+        // report for the terminal now presenting it. Observers send no
+        // pane env and cannot acquire or replace this binding.
         {
             let client_env: std::collections::BTreeMap<String, String> = payload
                 .get("env")
@@ -932,33 +930,47 @@ impl Worker {
                 .map(|env| crate::herdr::filter_client_env(&env))
                 .unwrap_or_default();
             if let Some(config) = crate::herdr::HerdrConfig::from_env(&client_env) {
-                let (active, session_ref, rlm_depth) = {
-                    let core = self.core.lock().unwrap();
-                    (core.busy, Worker::herdr_session_ref(&core), core.rlm_depth)
-                };
-                if rlm_depth == 0 {
-                    // The adopt is check-and-install under ONE lock
-                    // hold (no await inside): two concurrent attaches
-                    // cannot both observe the slot disabled and each
-                    // install a reporter — the loser would flip the
-                    // pane with a stray report. The first attach wins,
-                    // the second's is a no-op, and a watcher that sends
-                    // no env never reaches here at all.
+                let core = self.core.lock().unwrap();
+                let connection_retained = payload
+                    .get("connectionToken")
+                    .and_then(Value::as_str)
+                    .is_none_or(|token| {
+                        self.session_attachments
+                            .lock()
+                            .unwrap()
+                            .get(token)
+                            .is_some_and(|ids| ids.contains(&client_id))
+                    });
+                if retained
+                    && connection_retained
+                    && core.rlm_depth == 0
+                    && core.attached_client_ids.contains(&client_id)
+                {
+                    // Keep the core and reporter locks through install:
+                    // a disconnect cannot retire the client's retain
+                    // and then race a late reporter back into the slot.
                     let mut slot = self.herdr.lock().unwrap();
-                    if !slot.enabled() {
-                        let generation = self
-                            .herdr_generation
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                            + 1;
-                        let reporter = crate::herdr::HerdrReporter::start(
-                            config,
-                            session_ref.clone(),
-                            generation,
-                            std::sync::Arc::clone(&self.herdr_generation),
-                        );
-                        reporter.session_started(active, session_ref);
-                        *slot = reporter;
+                    if let Some(children) = self
+                        .agent_engine
+                        .as_ref()
+                        .and_then(|engine| engine.children.as_ref())
+                    {
+                        children.set_herdr_env(client_env.clone());
                     }
+                    let generation = self
+                        .herdr_generation
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        + 1;
+                    let session_ref = Worker::herdr_session_ref(&core);
+                    let mut reporter = crate::herdr::HerdrReporter::start(
+                        config,
+                        session_ref.clone(),
+                        generation,
+                        std::sync::Arc::clone(&self.herdr_generation),
+                    );
+                    reporter.client_id = Some(client_id);
+                    reporter.session_started(core.busy, session_ref);
+                    *slot = reporter;
                 }
             }
         }
@@ -1029,6 +1041,9 @@ impl Worker {
             }
         }
         drop(core);
+        for id in &ids {
+            self.silence_detached_herdr_client(id);
+        }
         // The runner's park re-arms: the released hold opens the idle
         // passivation's unattached gate for a now-detached child.
         self.work_notify.notify_one();
@@ -1063,9 +1078,26 @@ impl Worker {
             core.attached_client_ids.retain(|id| id != &client_id);
         }
         drop(core);
+        self.silence_detached_herdr_client(&client_id);
         // The notify re-arms the runner's idle-passivation window now
         // that the client detached.
         self.work_notify.notify_one();
         response_success(None, "detach", None)
+    }
+
+    /// Stop a session that is no longer presented by its pane owner.
+    /// Replacement attaches publish first, so detach deliberately stays
+    /// silent instead of releasing a pane now showing another session.
+    fn silence_detached_herdr_client(&self, client_id: &str) {
+        let core = self.core.lock().unwrap();
+        if core.attached_client_ids.iter().any(|id| id == client_id) {
+            return;
+        }
+        let mut reporter = self.herdr.lock().unwrap();
+        if reporter.client_id.as_deref() == Some(client_id) {
+            self.herdr_generation
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            *reporter = crate::herdr::HerdrReporter::default();
+        }
     }
 }

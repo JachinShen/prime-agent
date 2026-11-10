@@ -13,7 +13,9 @@ use anyhow::{anyhow, Context, Result};
 use crate::config;
 use crate::mode::RunOptions;
 use pa_core::session::discovery::{resolve_session_path, ResolvedSession};
-use pa_tui::interactive::{InteractiveOptions, ModelSelection, SessionSelection, UiMode};
+use pa_tui::interactive::{
+    InteractiveOptions, InteractiveOutcome, ModelSelection, SessionSelection, UiMode,
+};
 
 mod daemon;
 
@@ -151,7 +153,15 @@ pub fn run_interactive_mode(options: &RunOptions) -> Result<i32> {
                 let (anchor, notice) = continue_view.map_or((None, None), |view| {
                     (Some(view.session_id), Some(view.notice))
                 });
-                run_agents_view_flow(tui_options, anchor, notice).await
+                run_agents_view_flow(
+                    tui_options,
+                    AgentsViewStart {
+                        anchor,
+                        notice,
+                        ..AgentsViewStart::default()
+                    },
+                )
+                .await
             } else {
                 let outcome =
                     pa_tui::interactive::run_interactive(tui_options.clone(), UiMode::Terminal)
@@ -164,9 +174,7 @@ pub fn run_interactive_mode(options: &RunOptions) -> Result<i32> {
                     // A startup attach that fell back to the view has no session
                     // identity to anchor on; its notice seeds the view's status
                     // line instead.
-                    let anchor =
-                        (!outcome.session_id.is_empty()).then(|| outcome.session_id.clone());
-                    run_agents_view_flow(tui_options, anchor, outcome.agents_view_notice).await
+                    run_agents_view_flow(tui_options, AgentsViewStart::from(&outcome)).await
                 } else {
                     print_resume_hint(outcome.resume_hint.as_deref());
                     Ok(())
@@ -232,28 +240,42 @@ fn print_resume_hint(hint: Option<&str>) {
     pa_tui::exit_guard::note_exit_progress();
 }
 
-/// The agents-view loop: open the view, run the session it opens, and return
-/// to the view on agents-back or bare `/resume`; every other exit ends the app.
-async fn run_agents_view_flow(
-    base: InteractiveOptions,
+/// Carry the direct chat's navigation request into the agents-view loop.
+#[derive(Debug, Default, PartialEq)]
+struct AgentsViewStart {
     anchor: Option<String>,
     notice: Option<String>,
-) -> Result<()> {
-    let mut anchor = anchor;
+    scope: Option<pa_tui::agents_view::AgentsViewScope>,
+}
+
+impl From<&InteractiveOutcome> for AgentsViewStart {
+    fn from(outcome: &InteractiveOutcome) -> Self {
+        Self {
+            anchor: (!outcome.session_id.is_empty()).then(|| outcome.session_id.clone()),
+            notice: outcome.agents_view_notice.clone(),
+            scope: outcome.agents_view_scope.clone(),
+        }
+    }
+}
+
+/// The agents-view loop: open the view, run the session it opens, and return
+/// to the view on agents-back or bare `/resume`; every other exit ends the app.
+async fn run_agents_view_flow(base: InteractiveOptions, start: AgentsViewStart) -> Result<()> {
+    let mut anchor = start.anchor;
     // Every view run reuses the roster connection (a chat run hands it
     // back), so a switch back from a chat skips the handshake.
     let mut roster_link: Option<pa_tui::agents_view::AgentsViewLink> = None;
     let mut frames: Vec<(
         pa_tui::agents_view::AgentsViewScope,
         Option<SessionSelection>,
-    )> = Vec::new();
+    )> = start.scope.into_iter().map(|scope| (scope, None)).collect();
     let mut query: Option<String> = None;
     // A dismissal survives the next view run.
     let mut incident_notice_state: Option<pa_tui::incident_notices::IncidentNoticeState> = None;
     let mut expanded_ancestors: Vec<String> = Vec::new();
     let mut selected_row_identity: Option<String> = None;
     let mut selected_key: Option<pa_tui::agents_view::AgentsViewSelectionKey> = None;
-    let mut status_message: Option<String> = notice;
+    let mut status_message: Option<String> = start.notice;
     loop {
         let view_options = pa_tui::agents_view::AgentsViewOptions {
             socket_path: base.socket_path.clone(),

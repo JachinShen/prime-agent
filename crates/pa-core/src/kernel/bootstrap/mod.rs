@@ -184,7 +184,7 @@ async fn ensure_kernel_python_uncached(
             let mut missing = Vec::new();
             if !has_prime_agent_runtime(&python_str) {
                 missing.push(
-                    "a current prime-agent-runtime with callable rlm.spawn, rlm.create_session, rlm.host_request, rlm.progress_note, rlm.notify, rlm.rename, rlm._set_completion_notices_wired, and explicit harness CRUD methods".to_string(),
+                    "a current prime-agent-runtime with rlm.spawn(agent=..., agent_args=..., worktree=..., base=...), callable subagent controls (read/keys/focus/stop/close), rlm.create_session, rlm.host_request, rlm.progress_note, rlm.notify, rlm.rename, rlm._set_completion_notices_wired, and explicit harness CRUD methods".to_string(),
                 );
             }
             if missing.is_empty() {

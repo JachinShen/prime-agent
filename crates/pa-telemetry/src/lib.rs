@@ -19,6 +19,7 @@ mod client;
 mod env;
 mod event;
 mod events;
+mod external_subagent;
 mod install_id;
 mod platform;
 mod properties;
@@ -62,6 +63,7 @@ pub use events::{
     AgentInstallationStage, AgentStartupStage, OnboardingStage, RunTrigger, ToolCategory,
     UpdateHomebrewRefusal,
 };
+pub use external_subagent::{ExternalAgentKind, ExternalSubagentEvent, ExternalSubagentOutcome};
 pub use install_id::{existing_install_id, install_id};
 pub use platform::{base_properties, SCHEMA_VERSION};
 pub use properties::Properties;

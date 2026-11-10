@@ -421,8 +421,18 @@ pub fn parse_sent_agent_message(payload: &Value) -> Option<KernelSentAgentMessag
         "queued" => SentDeliveryStatus::Queued,
         _ => return None,
     };
-    let active_session_id = target.get("activeSessionId")?.as_str()?;
-    let session_id = target.get("sessionId")?.as_str()?;
+    let external = target.get("backend").and_then(Value::as_str) == Some("herdr")
+        && target.get("runtimeKind").and_then(Value::as_str) == Some("external")
+        && target
+            .get("rlmChildId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.is_empty());
+    let identity = |field| match target.get(field)? {
+        Value::Null if external => Some(""),
+        value => value.as_str(),
+    };
+    let active_session_id = identity("activeSessionId")?;
+    let session_id = identity("sessionId")?;
     let receiver_role = match obj.get("receiverRole").and_then(Value::as_str) {
         Some("parent") => Some(ReceiverRole::Parent),
         Some("sibling") => Some(ReceiverRole::Sibling),

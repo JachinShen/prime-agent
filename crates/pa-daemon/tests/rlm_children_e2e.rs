@@ -228,6 +228,9 @@ fn wait_until<T>(deadline: Duration, mut probe: impl FnMut() -> Option<T>) -> T 
 
 fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
     RlmSpawnRequest {
+        agent: None,
+        agent_args: Vec::new(),
+        worktree: None,
         prompt: prompt.to_string(),
         name: Some(name.to_string()),
         model: None,
@@ -260,7 +263,7 @@ async fn rlm_children_spawn_roster_collect_delete_end_to_end() {
     children.notify_turn_done();
     assert_eq!(handle.name, "worker-a");
     assert!(handle.rlm_child_id.starts_with("sub-"), "{handle:?}");
-    assert_eq!(handle.model, "scripted/faux-1");
+    assert_eq!(handle.model.as_deref(), Some("scripted/faux-1"));
     // TS child-session layout: the child persists inside its per-child
     // directory under the parent's session-artifacts tree.
     let expected_dir = agent_dir

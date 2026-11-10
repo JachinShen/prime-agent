@@ -343,10 +343,19 @@ pub fn is_agent_session_message_prompt(text: &str) -> bool {
 
 /// The TS `AgentSessionMessageEndpoint` the receipt carries as `target`.
 fn receipt_target_value(receipt: &AgentMessageReceipt) -> Value {
-    let mut target = json!({
-        "activeSessionId": receipt.target,
-        "sessionId": receipt.target_session_id.clone().unwrap_or_default(),
-    });
+    let mut target = if receipt.target_runtime_kind.as_deref() == Some("external") {
+        json!({
+            "activeSessionId": null,
+            "sessionId": null,
+            "rlmChildId": receipt.target,
+            "backend": "herdr",
+        })
+    } else {
+        json!({
+            "activeSessionId": receipt.target,
+            "sessionId": receipt.target_session_id.clone().unwrap_or_default(),
+        })
+    };
     if let Some(name) = receipt
         .target_session_name
         .as_deref()

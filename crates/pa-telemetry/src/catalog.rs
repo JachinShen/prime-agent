@@ -1240,6 +1240,36 @@ const HARNESS_REFINEMENTS_CHANGED: EventRule = EventRule {
     properties: &[("enabled", required(boolean()))],
 };
 
+const EXTERNAL_SUBAGENT_STARTED: EventRule = EventRule {
+    name: "external subagent started",
+    since: 2,
+    properties: &[
+        (
+            "agent_kind",
+            required(enum_rule(&["codex", "claude", "other"], "other")),
+        ),
+        ("worktree", required(boolean())),
+    ],
+};
+
+const EXTERNAL_SUBAGENT_COMPLETED: EventRule = EventRule {
+    name: "external subagent completed",
+    since: 2,
+    properties: &[
+        (
+            "agent_kind",
+            required(enum_rule(&["codex", "claude", "other"], "other")),
+        ),
+        (
+            "outcome",
+            required(enum_rule(&["completed", "error", "cancelled"], "error")),
+        ),
+        ("duration_ms", required(duration())),
+        ("answer_truncated", required(boolean())),
+        ("output_truncated", required(boolean())),
+    ],
+};
+
 /// Every catalogued event, flattened.
 #[must_use]
 pub fn catalog() -> Vec<&'static EventRule> {
@@ -1257,6 +1287,8 @@ pub fn catalog() -> Vec<&'static EventRule> {
         &STARTUP,
         &DAEMON_EVENT,
         &MODEL_REFUSED,
+        &EXTERNAL_SUBAGENT_STARTED,
+        &EXTERNAL_SUBAGENT_COMPLETED,
         &SESSION_ARCHIVED,
         &TUI_EXIT,
         &TUI_IPYTHON_BASH_RENDERED,

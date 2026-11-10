@@ -85,6 +85,9 @@ pub struct SessionSummary {
     /// ended.
     #[serde(default)]
     pub has_running_subagents: bool,
+    /// Cached external children, projected into independent supervisor roster rows.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_subagents: Vec<Value>,
     pub attached_clients: u32,
     pub message_count: u32,
     pub session_actions: SessionActionSnapshot,

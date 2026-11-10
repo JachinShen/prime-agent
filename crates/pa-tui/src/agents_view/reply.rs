@@ -108,7 +108,9 @@ pub(super) struct ReplyComposer {
 impl ReplyComposer {
     /// The live target replies; the saved target resumes.
     pub(super) fn placeholder(&self) -> &'static str {
-        if self.target.summary.get("activeSessionId").is_some() {
+        if self.target.summary.get("backend").and_then(Value::as_str) == Some("herdr")
+            || self.target.summary.get("activeSessionId").is_some()
+        {
             "Write a reply to this agent"
         } else {
             "Write a prompt to resume this session"
@@ -149,6 +151,9 @@ fn reply_headline(text: &str) -> Option<String> {
 /// The replyable row's key (`activeSessionId ?? id`) — the same derivation the
 /// disarm guard compares against.
 fn reply_key(summary: &Value) -> String {
+    if summary.get("backend").and_then(Value::as_str) == Some("herdr") {
+        return crate::agents_view_forest::summary_identity(summary);
+    }
     summary
         .get("activeSessionId")
         .and_then(Value::as_str)
@@ -191,10 +196,11 @@ impl AgentsViewMode {
     /// The selected row's reply target: a top-level agent with a live session or a
     /// saved file, never the row an armed delete sits on.
     pub(super) fn reply_target(&self) -> Option<ReplyTarget> {
-        let row = self
-            .rows
-            .get(self.selected)
-            .filter(|row| row.kind == RowKind::Agent)?;
+        let row = self.rows.get(self.selected).filter(|row| {
+            row.kind == RowKind::Agent
+                || (row.kind == RowKind::Subagent
+                    && row.summary.get("backend").and_then(Value::as_str) == Some("herdr"))
+        })?;
         if self
             .pending_delete
             .as_ref()
@@ -211,7 +217,8 @@ impl AgentsViewMode {
             .get("sessionFile")
             .and_then(Value::as_str)
             .filter(|path| !path.is_empty());
-        if active.is_none() && file.is_none() {
+        let external = summary.get("backend").and_then(Value::as_str) == Some("herdr");
+        if active.is_none() && file.is_none() && !external {
             return None;
         }
         Some(ReplyTarget {
@@ -258,7 +265,8 @@ impl AgentsViewMode {
             None => Headline::Loaded(
                 target
                     .summary
-                    .get("summary")
+                    .get("answerPreview")
+                    .or_else(|| target.summary.get("summary"))
                     .or_else(|| target.summary.get("firstMessage"))
                     .and_then(Value::as_str)
                     .map(str::to_string),
@@ -296,7 +304,10 @@ impl AgentsViewMode {
     pub(super) fn disarm_reply_off_selected(&mut self) {
         let on_target = match (&self.composer, self.rows.get(self.selected)) {
             (Composer::Reply(reply), Some(row)) => {
-                row.kind == RowKind::Agent && reply_key(&row.summary) == reply.target.key
+                (row.kind == RowKind::Agent
+                    || (row.kind == RowKind::Subagent
+                        && row.summary.get("backend").and_then(Value::as_str) == Some("herdr")))
+                    && reply_key(&row.summary) == reply.target.key
             }
             _ => false,
         };
@@ -485,7 +496,9 @@ impl AgentsViewMode {
             .then_some(StreamingBehavior::Steer)
         });
         let (resume_config, cwd_notice) = self.resume_config(&current);
-        if current.get("activeSessionId").is_none() {
+        if current.get("activeSessionId").is_none()
+            && current.get("backend").and_then(Value::as_str) != Some("herdr")
+        {
             self.set_status("Resuming session...");
         }
         reply.in_flight = Some(value);
@@ -811,6 +824,24 @@ async fn send_reply(
         resumed: None,
         cwd_notice: None,
     };
+    if let Some((parent, child)) = super::external::target(&request.summary)? {
+        let response = client
+            .request(super::external::command(
+                parent,
+                child,
+                "send",
+                Some(request.text),
+            ))
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+        return if response.success {
+            Ok(sent)
+        } else {
+            Err(response
+                .error
+                .unwrap_or_else(|| "External subagent send failed".to_string()))
+        };
+    }
     let mut active_session_id = request
         .summary
         .get("activeSessionId")
@@ -864,7 +895,7 @@ async fn send_reply(
             Ok(response) => {
                 return Err(response
                     .error
-                    .unwrap_or_else(|| "the command failed".into()))
+                    .unwrap_or_else(|| "the command failed".into()));
             }
             Err(error) => return Err(format!("{error:#}")),
         };

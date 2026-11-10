@@ -95,6 +95,7 @@ pub struct DaemonEventMeta {
 
 pub mod agent_roster;
 mod command;
+pub mod external_subagent;
 pub mod framing;
 pub mod herdr_env;
 pub mod launch_env;

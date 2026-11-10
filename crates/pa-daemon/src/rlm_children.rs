@@ -394,6 +394,10 @@ struct SupervisorChildSessionsInner {
     // an await, so sync engine paths can set it without a runtime `block_on`.
     identity: std::sync::Mutex<ParentIdentity>,
     children: Mutex<Vec<Arc<Mutex<ChildRecord>>>>,
+    external_children: Mutex<Vec<Arc<Mutex<external_store::ExternalRecord>>>>,
+    external_env: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
+    external_roster: std::sync::Mutex<Vec<Value>>,
+    external_restore_error: std::sync::Mutex<Option<String>>,
     /// Confirmed-dead children whose final usage remains owed. Not roster or slot owners.
     retired_usage: std::sync::Mutex<Vec<RetiredChild>>,
     /// Spawn-name reservations held until admission is durable, so
@@ -468,6 +472,10 @@ impl SupervisorChildSessions {
                 parent_session_name: std::sync::Mutex::new(None),
                 identity: std::sync::Mutex::new(ParentIdentity::with_default_depth()),
                 children: Mutex::new(Vec::new()),
+                external_children: Mutex::new(Vec::new()),
+                external_env: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+                external_roster: std::sync::Mutex::new(Vec::new()),
+                external_restore_error: std::sync::Mutex::new(None),
                 retired_usage: std::sync::Mutex::new(Vec::new()),
                 pending_spawn_names: std::sync::Mutex::new(std::collections::HashSet::new()),
                 deleted_children: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -605,7 +613,9 @@ impl SupervisorChildSessions {
     ///
     /// Returns the first close failure after walking every child (kept tracked for retry).
     pub async fn close_children(&self, reason: ChildCloseReason) -> Result<()> {
-        self.inner.close_children_inner(reason).await
+        let native = self.inner.close_children_inner(reason).await;
+        let external = self.inner.close_external_children().await;
+        native.and(external)
     }
 
     /// Replace the parent identity (set once the worker session exists).
@@ -635,8 +645,19 @@ impl SupervisorChildSessions {
 
     /// Rebuild the children registry from the spawn ledger (a restarted
     /// parent lists its ledger children again).
+    ///
+    /// # Panics
+    ///
+    /// Panics when the external restore-error mutex is poisoned.
     pub async fn reseed_from_ledger(&self) {
         self.inner.reseed_from_ledger().await;
+        if let Err(error) = self.inner.restore_external().await {
+            *self
+                .inner
+                .external_restore_error
+                .lock()
+                .expect("external restore error lock") = Some(format!("{error:#}"));
+        }
     }
 
     /// The inherited RLM depth bound (TS `getRlmMaxDepthStatus().maxDepth`
@@ -677,6 +698,13 @@ impl SupervisorChildSessions {
         for record in children.iter() {
             let record = record.lock().await;
             snapshots.push(record.snapshot_value());
+        }
+        drop(children);
+        for record in self.inner.external_children.lock().await.iter() {
+            let record = record.lock().await;
+            if !record.closed {
+                snapshots.push(record.snapshot());
+            }
         }
         snapshots
     }
@@ -819,7 +847,24 @@ impl SupervisorChildSessions {
     /// Cancel one live child run: abort the worker's in-flight turn and
     /// claim the terminal notice. `false` for an unknown or settled id.
     pub async fn cancel_child_run(&self, child_id: &str) -> bool {
-        self.inner.cancel_child_run(child_id).await
+        match self.inner.find_external(child_id).await {
+            Ok(Some(record)) => match self
+                .inner
+                .external_control(&record, "close", Vec::new(), 80)
+                .await
+            {
+                Ok(_) => true,
+                Err(error) => {
+                    eprintln!("pa-daemon: external cancellation failed: {error:#}");
+                    false
+                }
+            },
+            Ok(None) => self.inner.cancel_child_run(child_id).await,
+            Err(error) => {
+                eprintln!("pa-daemon: external registry unavailable: {error:#}");
+                false
+            }
+        }
     }
 
     /// Delete one inactive child by id: `"running"` while work is in flight,
@@ -829,12 +874,20 @@ impl SupervisorChildSessions {
     ///
     /// Returns an error when the child teardown fails (the kill times out or errors).
     pub async fn delete_inactive_subagent(&self, child_id: &str) -> Result<&'static str> {
+        if let Some(record) = self.inner.find_external(child_id).await? {
+            if !record.lock().await.settled {
+                return Ok("running");
+            }
+            self.inner.delete_external(&record).await?;
+            return Ok("deleted");
+        }
         self.inner.delete_inactive_subagent(child_id).await
     }
 
     fn entry(record: &ChildRecord) -> RlmSubagentEntry {
         let running = record.settled_status.is_none();
         RlmSubagentEntry {
+            external: None,
             rlm_child_id: record.rlm_child_id.clone(),
             active_session_id: Some(record.active_session_id.clone()),
             session_id: record.session_id.clone(),
@@ -860,6 +913,7 @@ impl SupervisorChildSessions {
 
     fn collect_result(record: &ChildRecord) -> RlmChildResult {
         RlmChildResult {
+            external: None,
             rlm_child_id: record.rlm_child_id.clone(),
             session_name: Some(record.session_name.clone()),
             session_dir: Some(record.session_dir.clone()),
@@ -878,6 +932,7 @@ impl SupervisorChildSessions {
     /// a settled answer, not a snapshot that invites re-polling.
     fn deleted_collect_result(deleted: &DeletedChild) -> RlmChildResult {
         RlmChildResult {
+            external: None,
             rlm_child_id: deleted.rlm_child_id.clone(),
             session_name: Some(deleted.session_name.clone()),
             session_dir: Some(deleted.session_dir.clone()),
@@ -915,7 +970,7 @@ impl SupervisorChildSessionsInner {
     /// Whether any tracked child run's settle funnel has not fired yet.
     pub(crate) async fn any_running(&self) -> bool {
         let children = self.children.lock().await;
-        any_unsettled(&children).await
+        any_unsettled(&children).await || self.external_running().await
     }
 
     /// Re-read [`Self::any_running`] into the `running` feed after a
@@ -925,7 +980,7 @@ impl SupervisorChildSessionsInner {
     /// registry after every change that preceded it.
     pub(crate) async fn refresh_running(&self) {
         let children = self.children.lock().await;
-        let running = any_unsettled(&children).await;
+        let running = any_unsettled(&children).await || self.external_running().await;
         self.running.send_if_modified(|current| {
             let changed = *current != running;
             *current = running;
@@ -1082,6 +1137,13 @@ impl SupervisorChildSessionsInner {
                 return Err(spawn_name_unavailable_error(name, depth));
             }
         }
+        drop(children);
+        for record in self.external_children.lock().await.iter() {
+            let record = record.lock().await;
+            if !record.closed && record.name == name {
+                return Err(spawn_name_unavailable_error(name, depth));
+            }
+        }
         Ok(())
     }
 
@@ -1109,6 +1171,10 @@ impl SupervisorChildSessionsInner {
     }
 }
 
+mod external;
+mod external_store;
+#[cfg(all(test, unix))]
+mod external_tests;
 mod host;
 mod lifecycle;
 mod registry;

@@ -33,6 +33,12 @@ pseudonymous installation identity for Prime Agent product analytics.
   precedence (`PI_OFFLINE`, `DO_NOT_TRACK`, `PRIME_AGENT_TELEMETRY`,
   settings) lives in pa-core's `telemetry_switch`.
 
+The versioned catalog includes `external subagent started` and
+`external subagent completed`. Their typed `ExternalSubagentEvent` builders accept
+only bounded agent-kind/outcome enums, duration, truncation flags and a worktree boolean. They carry
+no task, answer, path, session identifier, or terminal content, and use the existing
+non-blocking telemetry worker.
+
 ## Non-goals
 
 - No settings reading: the enabled/disclosure flow is owned by pa-core
@@ -51,6 +57,7 @@ pseudonymous installation identity for Prime Agent product analytics.
   `dropped_count`, `install_id`, `spawn`)
 - `TelemetrySink` trait, `SinkOutcome`
 - `Properties`, `TelemetryEvent`
+- `ExternalAgentKind`, `ExternalSubagentOutcome`, `ExternalSubagentEvent` (typed external child adoption events)
 - `install_id(agent_dir)`
 - `rename_onto(from, to)`
 - `parse_bool_override(value)`, `existing_install_id(agent_dir)`

@@ -642,8 +642,14 @@ impl AgentsViewMode {
         // session name can never push the model and cost/age columns
         // off-screen. The icon, its space, and the badge take the
         // leading cells.
+        let external_title = row
+            .summary
+            .get("external")
+            .and_then(|external| external.get("agent"))
+            .and_then(Value::as_str)
+            .map(|agent| format!("[{agent}] {}", row.title));
         let title = truncate_text(
-            &row.title,
+            external_title.as_deref().unwrap_or(&row.title),
             layout
                 .name_width
                 .saturating_sub(2 + indent_width + badge_width),
@@ -765,7 +771,10 @@ impl AgentsViewMode {
                     .get("isStreaming")
                     .and_then(serde_json::Value::as_bool)
                     == Some(true);
-            let word = if streaming {
+            let external = current.get("backend").and_then(Value::as_str) == Some("herdr");
+            let word = if external {
+                "send"
+            } else if streaming {
                 "steer"
             } else if live {
                 "send"
@@ -776,7 +785,7 @@ impl AgentsViewMode {
                 "{} {word}",
                 self.keybindings.key_text("tui.select.confirm")
             )];
-            if !reply.editor.get_text().trim().is_empty() {
+            if !external && !reply.editor.get_text().trim().is_empty() {
                 hints.push(format!(
                     "{} queue",
                     self.keybindings.key_text("app.message.followUp")
@@ -801,6 +810,12 @@ impl AgentsViewMode {
         // Every hint slot renders the effective binding, so a user override moves the hint with
         // the handler.
         let right_action = match self.rows.get(self.selected) {
+            Some(row)
+                if row.summary.get("backend").and_then(Value::as_str) == Some("herdr")
+                    && matches!(row.kind, RowKind::Agent | RowKind::Subagent) =>
+            {
+                "focus"
+            }
             Some(row) if row.kind == RowKind::SubagentSummary => {
                 if row.expanded {
                     "collapse"

@@ -189,6 +189,24 @@ impl AgentMessageController for LinkAgentMessageController {
                 .push(std::mem::replace(&mut member.id, durable));
             child_members.push(member);
         }
+        if let Some(children) = &self.children {
+            children.check_external_restore()?;
+            for row in children.external_roster_summaries() {
+                child_members.push(AgentFamilyMember {
+                    relationship: AgentFamilyRelationship::Child,
+                    id: row
+                        .get("rlmChildId")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| anyhow::anyhow!("External child row has no id"))?
+                        .to_string(),
+                    name: row
+                        .get("sessionName")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    aliases: Vec::new(),
+                });
+            }
+        }
         // TS `selectAgentFamily` order: parent, siblings by name, then
         // children by name.
         siblings.sort_by(|left, right| left.member_name().cmp(right.member_name()));
@@ -211,6 +229,12 @@ impl AgentMessageController for LinkAgentMessageController {
         // re-arm that child's usage observation BEFORE the delivery (a fast child can
         // settle before the await returns; a late-armed observation never bills).
         if let Some(children) = &self.children {
+            if let Some(receipt) = children
+                .send_external(&input.target, &input.message)
+                .await?
+            {
+                return Ok(receipt);
+            }
             children.observe_child_usage(&input.target).await;
         }
         let receipt = match self.deliver_direct(&input).await {

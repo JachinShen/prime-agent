@@ -81,6 +81,14 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn spawn(&self, request: RlmSpawnRequest) -> RlmHostFuture<RlmSpawnHandle> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            if request.worktree.is_some()
+                && request
+                    .agent
+                    .as_deref()
+                    .is_none_or(|agent| agent == "prime")
+            {
+                bail!("Worktree subagents require an external agent");
+            }
             let identity = this.identity.lock().expect("identity lock").clone();
             if identity.rlm_depth >= identity.rlm_max_depth {
                 bail!(rlm_depth_limit_error(
@@ -108,6 +116,15 @@ impl RlmSubagentHost for SupervisorChildSessions {
                     })
                 })
                 .transpose()?;
+            if request
+                .agent
+                .as_deref()
+                .is_some_and(|agent| agent != "prime")
+            {
+                this.assert_name_available(&name, identity.rlm_depth + 1)
+                    .await?;
+                return this.spawn_external(request, child_id, name, identity).await;
+            }
             let admission = async {
                 this.assert_name_available(&name, identity.rlm_depth + 1)
                     .await?;
@@ -305,10 +322,11 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 watcher_this.watch_child_settle(&watcher_record).await;
             });
             Ok(RlmSpawnHandle {
+                external: None,
                 rlm_child_id: child_id,
                 name,
                 session_dir: created.session_dir,
-                model,
+                model: Some(model),
             })
         })
     }
@@ -380,6 +398,17 @@ impl RlmSubagentHost for SupervisorChildSessions {
         })
     }
 
+    fn control_subagent(
+        &self,
+        target: String,
+        action: String,
+        keys: Vec<String>,
+        lines: u32,
+    ) -> RlmHostFuture<Value> {
+        let host = self.clone();
+        Box::pin(async move { host.control_external(&target, &action, keys, lines).await })
+    }
+
     fn list_subagents(&self) -> RlmHostFuture<Vec<RlmSubagentEntry>> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
@@ -430,6 +459,13 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 let record = record.lock().await;
                 entries.push(SupervisorChildSessions::entry(&record));
             }
+            this.check_external_restore()?;
+            for record in this.external_children.lock().await.iter() {
+                let record = record.lock().await;
+                if !record.closed {
+                    entries.push(record.entry());
+                }
+            }
             Ok(entries)
         })
     }
@@ -437,6 +473,9 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn delete_subagent(&self, target: String) -> RlmHostFuture<RlmDeleteSubagentResult> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            if let Some(record) = this.find_external(&target).await? {
+                return this.delete_external(&record).await;
+            }
             if !this.replay_retired_usage(Some(&target)).await {
                 bail!("RLM child usage remains owed after retirement; retry deletion");
             }
@@ -463,7 +502,8 @@ impl RlmSubagentHost for SupervisorChildSessions {
                         1 => {
                             let deleted = &matches[0];
                             return Ok(RlmDeleteSubagentResult {
-                                subagent: RlmSubagentEntry {
+                                    subagent: RlmSubagentEntry {
+                                        external: None,
                                     rlm_child_id: deleted.rlm_child_id.clone(),
                                     active_session_id: Some(deleted.active_session_id.clone()),
                                     session_id: deleted.session_id.clone(),
@@ -573,9 +613,28 @@ impl RlmSubagentHost for SupervisorChildSessions {
     fn collect(&self, targets: Vec<String>, timeout_ms: u64) -> RlmHostFuture<Vec<RlmChildResult>> {
         let this = Arc::clone(&self.inner);
         Box::pin(async move {
+            this.check_external_restore()?;
+            let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+            let mut external = if targets.is_empty() {
+                this.external_children.lock().await.clone()
+            } else {
+                Vec::new()
+            };
+            let mut native_targets = Vec::new();
+            if !targets.is_empty() {
+                for target in &targets {
+                    if let Some(record) = this.find_external(target).await? {
+                        external.push(record);
+                    } else {
+                        native_targets.push(target.clone());
+                    }
+                }
+            }
+            let all = targets.is_empty();
+            let targets = native_targets;
             // Resolve targets outside the registry lock: `resolve_record`
             // takes it too, and the tokio mutex is not re-entrant.
-            let mut records: Vec<Arc<Mutex<ChildRecord>>> = if targets.is_empty() {
+            let mut records: Vec<Arc<Mutex<ChildRecord>>> = if all {
                 this.children.lock().await.clone()
             } else {
                 Vec::with_capacity(targets.len())
@@ -609,7 +668,6 @@ impl RlmSubagentHost for SupervisorChildSessions {
                 };
                 records.push(record);
             }
-            let deadline = Instant::now() + Duration::from_millis(timeout_ms);
             let mut results = Vec::with_capacity(records.len());
             for record in &records {
                 this.refresh_record(record).await;
@@ -639,6 +697,21 @@ impl RlmSubagentHost for SupervisorChildSessions {
             }
             // Live entries first, the deleted generations' envelopes after.
             results.extend(deleted_results);
+            for record in external {
+                loop {
+                    let notified = this.settle_notify.notified();
+                    if record.lock().await.settled || Instant::now() >= deadline {
+                        break;
+                    }
+                    if tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), notified)
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                results.push(record.lock().await.result());
+            }
             Ok(results)
         })
     }
@@ -651,6 +724,23 @@ impl RlmSubagentHost for SupervisorChildSessions {
             // or one direct child by rlm child id, active id, or durable
             // session id ONLY — a child NAME never selects a rename
             // target (TS `renameAgentFamilySession`).
+            if let Some(target) = &session_id {
+                if let Some(record) = this.find_external(target).await? {
+                    if record.lock().await.child_id != *target {
+                        bail!("rlm.rename requires the full child handle");
+                    }
+                    if record.lock().await.name == name {
+                        return Ok(name);
+                    }
+                    this.assert_name_available(&name, 0).await?;
+                    let mut record = record.lock().await;
+                    record.name.clone_from(&name);
+                    record.persist().await?;
+                    drop(record);
+                    this.external_changed().await;
+                    return Ok(name);
+                }
+            }
             let identity = this.identity.lock().expect("identity lock").clone();
             let self_target = match &session_id {
                 None => true,

@@ -156,6 +156,9 @@ async fn sessions_with_gated_supervisor(
 
 fn spawn_request(name: &str, prompt: &str) -> RlmSpawnRequest {
     RlmSpawnRequest {
+        agent: None,
+        agent_args: Vec::new(),
+        worktree: None,
         prompt: prompt.to_string(),
         name: Some(name.to_string()),
         model: None,

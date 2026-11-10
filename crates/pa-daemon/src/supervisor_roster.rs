@@ -109,6 +109,20 @@ impl Supervisor {
                 ) {
                     return response_success(Some(command_id), type_name, None);
                 }
+                let (external, external_removed) =
+                    match roster.write_external_subagents(&summary, &resident.worker_id) {
+                        Ok(projected) => projected,
+                        Err(error) => {
+                            return response_failure(
+                                Some(command_id),
+                                type_name,
+                                &format!("Invalid external subagent roster: {error:#}"),
+                                None,
+                            );
+                        }
+                    };
+                changed.extend(external);
+                removed_ids.extend(external_removed);
                 let entry = roster.write_summary(summary.clone(), Some(&resident.worker_id), None);
                 // The worker's root slot can swap to a new durable
                 // session: the superseded row must not present as live.
@@ -179,32 +193,46 @@ impl Supervisor {
         let counter = summary
             .get("rosterDeltaSequence")
             .and_then(serde_json::Value::as_u64);
-        let (entry, swapped) = {
+        let (entry, swapped, external) = {
             // The pull shares the delta path's per-worker critical
             // section.
             let mut descriptor = resident.descriptor.lock().await;
-            let (entry, swapped) = {
+            let (entry, swapped, external) = {
                 let mut roster = self.roster.lock().unwrap();
                 if !roster.accept_roster_pull(&resident.worker_id, &instance, counter) {
                     return None;
                 }
+                let (external, external_removed) =
+                    match roster.write_external_subagents(summary, &resident.worker_id) {
+                        Ok(projected) => projected,
+                        Err(error) => {
+                            eprintln!(
+                                "Invalid external subagent roster from worker {}: {error:#}",
+                                resident.worker_id
+                            );
+                            return None;
+                        }
+                    };
                 let entry = roster.write_summary(summary.clone(), Some(&resident.worker_id), None);
                 // The pull sees the same root-slot swap: the superseded
                 // row retires, and the identity follow re-binds.
-                let swapped = roster.swapped_out_root_rows(&resident.worker_id, &entry);
+                let mut swapped = roster.swapped_out_root_rows(&resident.worker_id, &entry);
                 for agent_id in &swapped {
                     roster.delete(agent_id);
                 }
-                (entry, swapped)
+                swapped.extend(external_removed);
+                (entry, swapped, external)
             };
             let root_identity_bearing =
                 self.sync_root_identity_from_roster(resident, &mut descriptor);
             if root_identity_bearing {
                 resident.clear_identity_quarantine();
             }
-            (entry, swapped)
+            (entry, swapped, external)
         };
-        self.push_roster_update(vec![entry.clone()], swapped);
+        let mut changed = external;
+        changed.push(entry.clone());
+        self.push_roster_update(changed, swapped);
         Some(entry)
     }
 

@@ -61,9 +61,13 @@ pub fn classify_session_roster_status(
 
 /// Classify a summary in its wire (JSON) form: `Value` in, status out.
 pub fn classify_summary_value(summary: &Value, queued_child: bool) -> AgentRosterStatus {
-    let resident = summary
-        .get("activeSessionId")
-        .is_some_and(|id| !id.is_null() && id.as_str() != Some(""));
+    let resident = if summary.get("backend").and_then(Value::as_str) == Some("herdr") {
+        summary.get("runtimeResident").and_then(Value::as_bool) == Some(true)
+    } else {
+        summary
+            .get("activeSessionId")
+            .is_some_and(|id| !id.is_null() && id.as_str() != Some(""))
+    };
     let activity = summary
         .get("activity")
         .and_then(Value::as_str)
@@ -236,6 +240,7 @@ pub fn slim_roster_summary(summary: Value) -> Value {
         map.remove("streamingMessage");
         map.remove("sessionActions");
         map.remove("diagnostics");
+        map.remove("externalSubagents");
     }
     summary
 }
@@ -244,6 +249,26 @@ pub fn slim_roster_summary(summary: Value) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn external_runtime_residency_is_independent_of_native_session_identity() {
+        let mut summary = json!({"backend": "herdr", "runtimeResident": true,
+            "activeSessionId": null, "activity": "working"});
+        assert_eq!(
+            classify_summary_value(&summary, false),
+            AgentRosterStatus::Running
+        );
+        summary["activity"] = json!("idle");
+        assert_eq!(
+            classify_summary_value(&summary, false),
+            AgentRosterStatus::Idle
+        );
+        summary["runtimeResident"] = json!(false);
+        assert_eq!(
+            classify_summary_value(&summary, false),
+            AgentRosterStatus::Inactive
+        );
+    }
 
     #[test]
     fn status_formula_matches_ts() {

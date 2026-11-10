@@ -1,0 +1,258 @@
+{
+  "artifacts": "/private/tmp/pa-herdr-live-zzv50nye",
+  "success": true,
+  "original_focus": {
+    "focused_workspace_id": "wJ",
+    "focused_tab_id": "wJ:t3",
+    "focused_pane_id": "wJ:p3"
+  },
+  "workspace_id": "wW",
+  "focus_observations": [
+    {
+      "phase": "workspace creation",
+      "original": {
+        "focused_workspace_id": "wJ",
+        "focused_tab_id": "wJ:t3",
+        "focused_pane_id": "wJ:p3"
+      },
+      "current": {
+        "focused_workspace_id": "wJ",
+        "focused_tab_id": "wJ:t3",
+        "focused_pane_id": "wJ:p3"
+      },
+      "changed": false
+    },
+    {
+      "phase": "external spawn",
+      "original": {
+        "focused_workspace_id": "wJ",
+        "focused_tab_id": "wJ:t3",
+        "focused_pane_id": "wJ:p3"
+      },
+      "current": {
+        "focused_workspace_id": "wJ",
+        "focused_tab_id": "wJ:t3",
+        "focused_pane_id": "wJ:p3"
+      },
+      "changed": false
+    }
+  ],
+  "parent_active_session_id": "6fcd359f0aef",
+  "first": {
+    "rlm_child_id": "sub-eba3afd0",
+    "session_name": "live-codex-e8a1213d",
+    "session_dir": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0",
+    "status": "done",
+    "settled": true,
+    "answer_preview": "PRIME_HERDR_ONE_aec8dfdb0cb24204ab912e04909071b9\n",
+    "answer_text": "PRIME_HERDR_ONE_aec8dfdb0cb24204ab912e04909071b9\n",
+    "error": null,
+    "duration_ms": 39621,
+    "tool_use_count": null,
+    "replied_since_task": null,
+    "external": {
+      "agent": "codex",
+      "workspace_id": "wW",
+      "pane_id": "wW:p2",
+      "terminal_id": "term_65fd2cf74ed5f3e",
+      "agent_name": "pa-1afae68e748441a4a4bbae437031",
+      "turn": 1,
+      "state": "done",
+      "answer_path": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0/turns/001/answer.md",
+      "answer_truncated": false,
+      "output": {
+        "text": "[Terminal text omitted; full capture is in the local verifier artifacts.]",
+        "source": "recent_unwrapped",
+        "revision": 0,
+        "truncated": false
+      },
+      "notification_error": null
+    }
+  },
+  "second": {
+    "rlm_child_id": "sub-eba3afd0",
+    "session_name": "live-codex-e8a1213d",
+    "session_dir": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0",
+    "status": "done",
+    "settled": true,
+    "answer_preview": "PRIME_HERDR_TWO_78ffecffd53b4f1884a652ceccb79de6\n",
+    "answer_text": "PRIME_HERDR_TWO_78ffecffd53b4f1884a652ceccb79de6\n",
+    "error": null,
+    "duration_ms": 10054,
+    "tool_use_count": null,
+    "replied_since_task": null,
+    "external": {
+      "agent": "codex",
+      "workspace_id": "wW",
+      "pane_id": "wW:p2",
+      "terminal_id": "term_65fd2cf74ed5f3e",
+      "agent_name": "pa-1afae68e748441a4a4bbae437031",
+      "turn": 2,
+      "state": "done",
+      "answer_path": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0/turns/002/answer.md",
+      "answer_truncated": false,
+      "output": {
+        "text": "[Terminal text omitted; full capture is in the local verifier artifacts.]",
+        "source": "recent_unwrapped",
+        "revision": 0,
+        "truncated": false
+      },
+      "notification_error": null
+    }
+  },
+  "spawn": {
+    "rlm_child_id": "sub-eba3afd0",
+    "name": "live-codex-e8a1213d",
+    "session_dir": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0",
+    "model": null,
+    "external": {
+      "agent": "codex",
+      "workspace_id": "wW",
+      "pane_id": "wW:p2",
+      "terminal_id": "term_65fd2cf74ed5f3e",
+      "agent_name": "pa-1afae68e748441a4a4bbae437031",
+      "turn": 1,
+      "state": "pending",
+      "answer_path": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0/turns/001/answer.md",
+      "answer_truncated": false,
+      "output": null,
+      "notification_error": null
+    }
+  },
+  "roster_row": {
+    "agentId": "/private/tmp/pa-herdr-live-zzv50nye/sessions/01a1bf2e-eddc-72c0-bd69-9054e8779dcd.jsonl#sub-eba3afd0",
+    "summary": {
+      "id": "sub-eba3afd0",
+      "rlmChildId": "sub-eba3afd0",
+      "sessionName": "live-codex-e8a1213d",
+      "sessionDir": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0",
+      "label": "codex",
+      "status": "completed",
+      "durationMs": 39611,
+      "answerPreview": "PRIME_HERDR_ONE_aec8dfdb0cb24204ab912e04909071b9\n",
+      "backend": "herdr",
+      "external": {
+        "agent": "codex",
+        "workspace_id": "wW",
+        "pane_id": "wW:p2",
+        "terminal_id": "term_65fd2cf74ed5f3e",
+        "agent_name": "pa-1afae68e748441a4a4bbae437031",
+        "turn": 1,
+        "state": "done",
+        "answer_path": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0/turns/001/answer.md",
+        "answer_truncated": false,
+        "output": {
+          "text": "[Terminal text omitted; full capture is in the local verifier artifacts.]",
+          "source": "recent_unwrapped",
+          "revision": 0,
+          "truncated": false
+        }
+      },
+      "error": null,
+      "runtimeKind": "subagent",
+      "parentSessionId": "01a1bf2e-eddc-72c0-bd69-9054e8779dcd",
+      "parentSessionPath": "/private/tmp/pa-herdr-live-zzv50nye/sessions/01a1bf2e-eddc-72c0-bd69-9054e8779dcd.jsonl",
+      "parentActiveSessionId": "6fcd359f0aef",
+      "activeSessionId": null,
+      "sessionId": null,
+      "activity": "idle",
+      "taskState": "completed",
+      "runtimeResident": true
+    },
+    "status": "idle",
+    "workerId": "6fcd359f0aef"
+  },
+  "notices": [
+    {
+      "customType": "rlm_child_terminal_notice",
+      "content": "[herdr-subagent] live-codex-e8a1213d: completed (turn 1)\n/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0/turns/001/answer.md\nPRIME_HERDR_ONE_aec8dfdb0cb24204ab912e04909071b9\n",
+      "display": true,
+      "details": {
+        "childId": "sub-eba3afd0",
+        "backend": "herdr",
+        "turn": 1,
+        "event": "completed",
+        "externalNoticeId": "sub-eba3afd0-1-completed"
+      },
+      "role": "custom",
+      "timestamp": "2026-11-09T07:22:08.187Z"
+    },
+    {
+      "customType": "rlm_child_terminal_notice",
+      "content": "[herdr-subagent] live-codex-e8a1213d: completed (turn 2)\n/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0/turns/002/answer.md\nPRIME_HERDR_TWO_78ffecffd53b4f1884a652ceccb79de6\n",
+      "display": true,
+      "details": {
+        "childId": "sub-eba3afd0",
+        "backend": "herdr",
+        "turn": 2,
+        "event": "completed",
+        "externalNoticeId": "sub-eba3afd0-2-completed"
+      },
+      "role": "custom",
+      "timestamp": "2026-11-09T07:22:18.315Z"
+    }
+  ],
+  "followup_receipt": {
+    "id": "sub-eba3afd0-turn-2",
+    "source": "agent_message",
+    "target": {
+      "activeSessionId": null,
+      "sessionId": null,
+      "rlmChildId": "sub-eba3afd0",
+      "backend": "herdr",
+      "sessionName": "live-codex-e8a1213d",
+      "runtimeKind": "external"
+    },
+    "message": "Write exactly this line as your final answer to the new answer file named above: PRIME_HERDR_TWO_78ffecffd53b4f1884a652ceccb79de6. Do not modify other files.",
+    "deliveryStatus": "queued",
+    "deliveredAt": null,
+    "queuedAt": "1794208928282",
+    "deliveryMode": "followUp",
+    "receiverRole": "child"
+  },
+  "deleted": {
+    "rlm_child_id": "sub-eba3afd0",
+    "active_session_id": null,
+    "session_id": null,
+    "session_name": "live-codex-e8a1213d",
+    "session_dir": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0",
+    "status": "completed",
+    "activity": null,
+    "tool_use_count": null,
+    "duration_ms": 10223,
+    "answer_preview": "PRIME_HERDR_TWO_78ffecffd53b4f1884a652ceccb79de6\n",
+    "replied_since_task": null,
+    "progress_note": null,
+    "label": "codex",
+    "last_activity_at": 1794208928276,
+    "activity_stale_ms": null,
+    "external": {
+      "agent": "codex",
+      "workspace_id": "wW",
+      "pane_id": "wW:p2",
+      "terminal_id": "term_65fd2cf74ed5f3e",
+      "agent_name": "pa-1afae68e748441a4a4bbae437031",
+      "turn": 2,
+      "state": "closed",
+      "answer_path": "/private/tmp/pa-herdr-live-zzv50nye/agent/session-artifacts/01a1bf2e-eddc-72c0-bd69-9054e8779dcd/sub-eba3afd0/turns/002/answer.md",
+      "answer_truncated": false,
+      "output": {
+        "text": "[Terminal text omitted; full capture is in the local verifier artifacts.]",
+        "source": "recent_unwrapped",
+        "revision": 0,
+        "truncated": false
+      },
+      "notification_error": null
+    }
+  },
+  "cleanup_errors": [],
+  "environment": {
+    "date": "2026-11-09",
+    "platform": "macOS aarch64",
+    "herdr": "0.9.5 / protocol 22",
+    "codex": "0.166.0",
+    "python": "3.14.4",
+    "parent": "scripted faux provider with a real persistent Python kernel",
+    "child": "real interactive Codex"
+  }
+}

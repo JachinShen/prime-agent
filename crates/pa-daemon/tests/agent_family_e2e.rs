@@ -418,6 +418,9 @@ async fn parent_child_agent_message_round_trip_end_to_end() {
     });
     let handle = children
         .spawn(RlmSpawnRequest {
+            agent: None,
+            agent_args: Vec::new(),
+            worktree: None,
             prompt: "work on the lane".to_string(),
             name: Some("kid".to_string()),
             model: None,
@@ -747,6 +750,9 @@ async fn family_edges_never_cross_families_end_to_end() {
         });
         let handle = children
             .spawn(RlmSpawnRequest {
+                agent: None,
+                agent_args: Vec::new(),
+                worktree: None,
                 prompt: "work on the lane".to_string(),
                 name: Some(kid_name.to_string()),
                 model: None,
@@ -887,6 +893,9 @@ async fn family_edges_never_cross_families_end_to_end() {
     });
     let grandkid_handle = kid_children
         .spawn(RlmSpawnRequest {
+            agent: None,
+            agent_args: Vec::new(),
+            worktree: None,
             prompt: "grandkid work".to_string(),
             name: Some("grandkid".to_string()),
             model: None,
@@ -1205,6 +1214,9 @@ async fn parent_renames_a_child_end_to_end() {
     });
     let handle = children
         .spawn(RlmSpawnRequest {
+            agent: None,
+            agent_args: Vec::new(),
+            worktree: None,
             prompt: "work on the lane".to_string(),
             name: Some("kid".to_string()),
             model: None,

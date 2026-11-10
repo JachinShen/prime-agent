@@ -27,8 +27,8 @@ fn run_quiet(command: &str, args: &[&str]) -> bool {
 
 /// The runtime-ready assertion from the TS product: a current
 /// prime-agent-runtime with the callable RLM surface, harness CRUD, bash
-/// handles, and protocol version 3.
-const RUNTIME_READY_CHECK: &str = "import inspect; import rlm; from rlm import McpIntegration; import rlm.mcp as mcp; from rlm.harness import HarnessEntry; _harness_methods = ['create_memory', 'update_memory', 'delete_memory', 'create_skill', 'update_skill', 'delete_skill', 'create_subagent', 'update_subagent', 'delete_subagent', 'create_prompt_note', 'update_prompt_note', 'delete_prompt_note', 'record_refinement']; _mcp_discovery_methods = ['list_plugins', 'search_plugins', 'list_connections', 'search_tools', 'describe_tool']; assert callable(mcp.list_tools); assert callable(mcp.call_tool); assert all(callable(getattr(mcp, _m, None)) for _m in _mcp_discovery_methods), \"rlm.mcp is missing MCP discovery methods (list_plugins, search_plugins, list_connections, search_tools, describe_tool); the kernel venv needs a current prime-agent-runtime\"; assert callable(rlm.spawn); assert hasattr(rlm, 'rlm'); assert callable(rlm.rlm.spawn); assert inspect.signature(rlm.spawn).parameters['name'].default is inspect.Parameter.empty; assert not hasattr(rlm, 'run'); assert not hasattr(rlm.rlm, 'run'); assert callable(rlm.host_request); assert callable(rlm.find_models); assert callable(rlm.rlm.find_models); assert callable(rlm.create_session); assert callable(rlm.rlm.create_session); assert callable(rlm.progress_note); assert callable(rlm.rlm.progress_note); assert callable(rlm.notify); assert callable(rlm.rlm.notify); assert callable(rlm.rename); assert callable(rlm.rlm.rename); assert hasattr(rlm, 'harness'); assert hasattr(rlm, 'get_harness_state'); assert hasattr(rlm.rlm, 'harness'); assert hasattr(rlm.rlm, 'get_harness_state'); assert all(callable(getattr(_harness, _method, None)) for _harness in (rlm.harness, rlm.rlm.harness) for _method in _harness_methods); assert 'reference' in HarnessEntry.__dataclass_fields__; assert 'scope' in HarnessEntry.__dataclass_fields__; assert 'reference' in inspect.signature(rlm.harness.create_skill).parameters; assert 'reference' in inspect.signature(rlm.harness.update_skill).parameters; assert 'global_' in inspect.signature(rlm.harness.create_memory).parameters; assert 'global_' in inspect.signature(rlm.get_harness_state).parameters; assert not hasattr(rlm, 'background'); assert not hasattr(rlm.rlm, 'background'); from rlm.bash import BashHandle, BashResult; assert callable(rlm.bash); assert {'persistent', 'yield_after'} <= set(inspect.signature(rlm.bash).parameters); assert callable(rlm.persistent_shells); assert callable(rlm._set_completion_notices_wired); assert all(callable(getattr(BashHandle, _m, None)) for _m in ('tail', 'output', 'poll', 'kill')); assert {'exit_code', 'output', 'duration'} <= set(BashResult.__dataclass_fields__); import rlm.repl as _repl; assert callable(_repl.main); assert callable(_repl.emit); assert callable(_repl.host_request); assert callable(_repl.is_active); assert _repl.PROTOCOL_VERSION == 3; assert callable(rlm.emit); assert not hasattr(rlm, 'HOST_COMM_TARGET'); assert not hasattr(mcp, 'install_shutdown_hook')";
+/// handles, external-subagent arguments and controls, and protocol version 3.
+const RUNTIME_READY_CHECK: &str = "import inspect; import rlm; from rlm import McpIntegration; import rlm.mcp as mcp; from rlm.harness import HarnessEntry; _harness_methods = ['create_memory', 'update_memory', 'delete_memory', 'create_skill', 'update_skill', 'delete_skill', 'create_subagent', 'update_subagent', 'delete_subagent', 'create_prompt_note', 'update_prompt_note', 'delete_prompt_note', 'record_refinement']; _mcp_discovery_methods = ['list_plugins', 'search_plugins', 'list_connections', 'search_tools', 'describe_tool']; assert callable(mcp.list_tools); assert callable(mcp.call_tool); assert all(callable(getattr(mcp, _m, None)) for _m in _mcp_discovery_methods), \"rlm.mcp is missing MCP discovery methods (list_plugins, search_plugins, list_connections, search_tools, describe_tool); the kernel venv needs a current prime-agent-runtime\"; assert callable(rlm.spawn); assert hasattr(rlm, 'rlm'); assert callable(rlm.rlm.spawn); assert all({'agent', 'agent_args', 'worktree', 'base'} <= set(inspect.signature(_spawn).parameters) and all(inspect.signature(_spawn).parameters[_arg].kind in (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD) and inspect.signature(_spawn).parameters[_arg].default is None for _arg in ('agent', 'agent_args', 'base')) and inspect.signature(_spawn).parameters['worktree'].kind is inspect.Parameter.KEYWORD_ONLY and inspect.signature(_spawn).parameters['worktree'].default is False for _spawn in (rlm.spawn, rlm.rlm.spawn)), \"rlm.spawn is missing optional external-agent/worktree keywords; the kernel venv needs a current prime-agent-runtime\"; assert all(callable(getattr(_facade, _method, None)) for _facade in (rlm, rlm.rlm) for _method in ('subagent_read', 'subagent_keys', 'subagent_focus', 'subagent_stop', 'subagent_close')), \"rlm is missing external-subagent controls; the kernel venv needs a current prime-agent-runtime\"; assert inspect.signature(rlm.spawn).parameters['name'].default is inspect.Parameter.empty; assert not hasattr(rlm, 'run'); assert not hasattr(rlm.rlm, 'run'); assert callable(rlm.host_request); assert callable(rlm.find_models); assert callable(rlm.rlm.find_models); assert callable(rlm.create_session); assert callable(rlm.rlm.create_session); assert callable(rlm.progress_note); assert callable(rlm.rlm.progress_note); assert callable(rlm.notify); assert callable(rlm.rlm.notify); assert callable(rlm.rename); assert callable(rlm.rlm.rename); assert hasattr(rlm, 'harness'); assert hasattr(rlm, 'get_harness_state'); assert hasattr(rlm.rlm, 'harness'); assert hasattr(rlm.rlm, 'get_harness_state'); assert all(callable(getattr(_harness, _method, None)) for _harness in (rlm.harness, rlm.rlm.harness) for _method in _harness_methods); assert 'reference' in HarnessEntry.__dataclass_fields__; assert 'scope' in HarnessEntry.__dataclass_fields__; assert 'reference' in inspect.signature(rlm.harness.create_skill).parameters; assert 'reference' in inspect.signature(rlm.harness.update_skill).parameters; assert 'global_' in inspect.signature(rlm.harness.create_memory).parameters; assert 'global_' in inspect.signature(rlm.get_harness_state).parameters; assert not hasattr(rlm, 'background'); assert not hasattr(rlm.rlm, 'background'); from rlm.bash import BashHandle, BashResult; assert callable(rlm.bash); assert {'persistent', 'yield_after'} <= set(inspect.signature(rlm.bash).parameters); assert callable(rlm.persistent_shells); assert callable(rlm._set_completion_notices_wired); assert all(callable(getattr(BashHandle, _m, None)) for _m in ('tail', 'output', 'poll', 'kill')); assert {'exit_code', 'output', 'duration'} <= set(BashResult.__dataclass_fields__); import rlm.repl as _repl; assert callable(_repl.main); assert callable(_repl.emit); assert callable(_repl.host_request); assert callable(_repl.is_active); assert _repl.PROTOCOL_VERSION == 3; assert callable(rlm.emit); assert not hasattr(rlm, 'HOST_COMM_TARGET'); assert not hasattr(mcp, 'install_shutdown_hook')";
 
 pub(crate) fn has_prime_agent_runtime(python: &str) -> bool {
     run_quiet(python, &["-c", RUNTIME_READY_CHECK])
@@ -147,8 +147,9 @@ pub(super) fn runtime_probe_key(
     installed_identity: &str,
 ) -> String {
     format!(
-        "{python}\u{0}{runtime_identity}\u{0}{installed_identity}\u{0}sha256:{:x}",
-        sha2::Sha256::digest(version_raw.as_bytes())
+        "{python}\u{0}{runtime_identity}\u{0}{installed_identity}\u{0}sha256:{:x}\u{0}probe:{:x}",
+        sha2::Sha256::digest(version_raw.as_bytes()),
+        sha2::Sha256::digest(RUNTIME_READY_CHECK.as_bytes())
     )
 }
 
@@ -210,4 +211,65 @@ pub fn invalidate_runtime_probe_cache() {
 #[cfg(all(test, unix))]
 pub(crate) fn clear_in_process_probe_memo_for_tests() {
     *lock_probe_memo() = None;
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::RUNTIME_READY_CHECK;
+
+    #[test]
+    fn runtime_probe_rejects_old_spawn_facades_and_missing_external_controls() {
+        let runtime_src =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prime-agent-runtime/src");
+        let script = r#"
+import sys
+import rlm
+
+probe = sys.argv[1]
+exec(probe)
+
+async def old_spawn(prompt, *, name, model=None, thinking=None):
+    pass
+
+async def old_external_spawn(prompt, *, name, model=None, thinking=None, agent=None, agent_args=None):
+    pass
+
+async def required_agent_spawn(prompt, *, name, agent, agent_args):
+    pass
+
+async def positional_agent_spawn(prompt, agent=None, agent_args=None, /, *, name):
+    pass
+
+def rejected(facade, member, replacement):
+    original = getattr(facade, member)
+    setattr(facade, member, replacement)
+    try:
+        try:
+            exec(probe)
+        except AssertionError:
+            return
+        raise RuntimeError(f"runtime probe accepted incompatible {facade!r}.{member}")
+    finally:
+        setattr(facade, member, original)
+
+for facade in (rlm, rlm.rlm):
+    for legacy in (old_spawn, old_external_spawn, required_agent_spawn, positional_agent_spawn):
+        rejected(facade, "spawn", legacy)
+    for member in ("subagent_read", "subagent_keys", "subagent_focus", "subagent_stop", "subagent_close"):
+        rejected(facade, member, None)
+
+exec(probe)
+"#;
+        let output = std::process::Command::new("python3")
+            .args(["-S", "-c", script, RUNTIME_READY_CHECK])
+            .env("PYTHONPATH", runtime_src)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .output()
+            .expect("run the runtime capability probe with Python");
+        assert!(
+            output.status.success(),
+            "runtime capability regression failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

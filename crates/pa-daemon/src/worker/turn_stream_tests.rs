@@ -10,6 +10,7 @@ use crate::engine::{
 mod abort_idle_race;
 mod broadcast;
 mod burst;
+mod external_notice;
 mod feed;
 mod interleave;
 mod park;

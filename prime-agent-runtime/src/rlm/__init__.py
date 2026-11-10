@@ -25,11 +25,49 @@ _RENAMED_RUN_MESSAGE = "rlm.run was renamed; spawn a child with: handle = await 
 
 
 @dataclass(frozen=True)
+class ExternalSubagentOutput:
+    """Terminal evidence, distinct from an external agent's answer file."""
+
+    text: str
+    source: str
+    revision: int
+    truncated: bool
+
+
+@dataclass(frozen=True)
+class ExternalSubagentWorktree:
+    """An isolated checkout retained for inspection and merging."""
+
+    path: Path
+    branch: str
+    repo_root: Path
+
+
+@dataclass(frozen=True)
+class ExternalSubagentInfo:
+    """Herdr runtime identity and per-turn result metadata (RFC-0001)."""
+
+    agent: str
+    workspace_id: str
+    pane_id: str
+    terminal_id: str
+    agent_name: str
+    turn: int
+    state: str
+    answer_path: Path | None = None
+    answer_truncated: bool = False
+    output: ExternalSubagentOutput | None = None
+    notification_error: str | None = None
+    worktree: ExternalSubagentWorktree | None = None
+
+
+@dataclass(frozen=True)
 class RLMSpawnHandle:
     rlm_child_id: str
     name: str
     session_dir: Path
-    model: str
+    model: str | None
+    external: ExternalSubagentInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +114,7 @@ class RLMSubagent:
     label: str | None = None
     last_activity_at: float | None = None
     activity_stale_ms: float | None = None
+    external: ExternalSubagentInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +142,74 @@ class RLMChildResult:
     duration_ms: int | None = None
     tool_use_count: int | None = None
     replied_since_task: bool | None = None
+    external: ExternalSubagentInfo | None = None
+
+
+def _external_from_payload(payload: dict[str, Any], operation: str) -> ExternalSubagentInfo | None:
+    value = payload.get("external")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{operation} has invalid external runtime metadata")
+    for field in ("agent", "workspace_id", "pane_id", "terminal_id", "agent_name", "state"):
+        if not isinstance(value.get(field), str) or not value[field].strip():
+            raise RuntimeError(f"{operation} external has invalid {field}")
+    turn = value.get("turn")
+    if not isinstance(turn, int) or isinstance(turn, bool) or turn < 0:
+        raise RuntimeError(f"{operation} external has invalid turn")
+    truncated = value.get("answer_truncated")
+    if not isinstance(truncated, bool):
+        raise RuntimeError(f"{operation} external has invalid answer_truncated")
+    answer_path = value.get("answer_path")
+    if answer_path is not None and (not isinstance(answer_path, str) or not answer_path):
+        raise RuntimeError(f"{operation} external has invalid answer_path")
+    notification_error = value.get("notification_error")
+    if notification_error is not None and not isinstance(notification_error, str):
+        raise RuntimeError(f"{operation} external has invalid notification_error")
+    worktree = value.get("worktree")
+    if worktree is not None:
+        if not isinstance(worktree, dict) or any(
+            not isinstance(worktree.get(field), str) or not worktree[field].strip() or "\0" in worktree[field]
+            for field in ("path", "branch", "repo_root")
+        ):
+            raise RuntimeError(f"{operation} external has invalid worktree metadata")
+        if not Path(worktree["path"]).is_absolute() or not Path(worktree["repo_root"]).is_absolute():
+            raise RuntimeError(f"{operation} external worktree paths must be absolute")
+        worktree = ExternalSubagentWorktree(
+            path=Path(worktree["path"]), branch=worktree["branch"], repo_root=Path(worktree["repo_root"])
+        )
+    output = value.get("output")
+    if output is not None:
+        if not isinstance(output, dict):
+            raise RuntimeError(f"{operation} external has invalid output")
+        revision = output.get("revision")
+        if (
+            not isinstance(output.get("text"), str)
+            or not isinstance(output.get("source"), str)
+            or not output["source"]
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or revision < 0
+            or not isinstance(output.get("truncated"), bool)
+        ):
+            raise RuntimeError(f"{operation} external has invalid terminal output")
+        output = ExternalSubagentOutput(
+            text=output["text"], source=output["source"], revision=revision, truncated=output["truncated"]
+        )
+    return ExternalSubagentInfo(
+        agent=value["agent"],
+        workspace_id=value["workspace_id"],
+        pane_id=value["pane_id"],
+        terminal_id=value["terminal_id"],
+        agent_name=value["agent_name"],
+        turn=turn,
+        state=value["state"],
+        answer_path=Path(answer_path) if answer_path is not None else None,
+        answer_truncated=truncated,
+        output=output,
+        notification_error=notification_error,
+        worktree=worktree,
+    )
 
 
 def _spawn_handle_from_payload(payload: Any) -> RLMSpawnHandle:
@@ -112,13 +219,19 @@ def _spawn_handle_from_payload(payload: Any) -> RLMSpawnHandle:
     name = payload.get("name")
     session_dir = payload.get("session_dir")
     model = payload.get("model")
-    if not all(isinstance(value, str) and value for value in (child_id, name, session_dir, model)):
+    external = _external_from_payload(payload, "rlm.spawn")
+    if not all(isinstance(value, str) and value for value in (child_id, name, session_dir)):
+        raise RuntimeError("rlm.spawn returned an invalid spawn handle")
+    if model is not None and (not isinstance(model, str) or not model):
+        raise RuntimeError("rlm.spawn returned an invalid model")
+    if external is None and model is None:
         raise RuntimeError("rlm.spawn returned an invalid spawn handle")
     return RLMSpawnHandle(
         rlm_child_id=child_id,
         name=name,
         session_dir=Path(session_dir),
         model=model,
+        external=external,
     )
 
 
@@ -182,24 +295,65 @@ async def spawn(
     name: str,
     model: str | None = None,
     thinking: str | None = None,
+    agent: str | None = None,
+    agent_args: list[str] | None = None,
+    worktree: bool | str = False,
+    base: str | None = None,
 ) -> RLMSpawnHandle:
-    """Spawn a recursive Prime Agent child and return once its task is admitted.
+    """Spawn a child and return once its task is admitted.
 
     ``name`` is required and must be unique among siblings.
     ``model`` selects a child with an exact ``provider/model`` selector.
     ``thinking`` sets the child reasoning level (e.g. 'off', 'low', 'medium', 'high');
     defaults to the parent level; levels invalid for the resolved model fail the spawn.
+    ``agent`` selects a Herdr agent kind; external agents use ``agent_args`` instead.
+    ``worktree`` creates an isolated checkout (True or a branch name); ``base`` selects its starting ref.
     """
     if not isinstance(prompt, str):
         raise TypeError(f"prompt must be str, got {type(prompt).__name__}")
+    if agent is not None and (not isinstance(agent, str) or not agent.strip()):
+        raise TypeError("agent must be a non-empty str")
+    external_agent = agent.strip() if agent is not None and agent.strip() != "prime" else None
+    if agent_args is not None and (
+        not isinstance(agent_args, list)
+        or any(not isinstance(arg, str) or "\0" in arg for arg in agent_args)
+    ):
+        raise TypeError("agent_args must be a list of strings without NUL characters")
+    if external_agent is None and agent_args:
+        raise ValueError("agent_args requires an external agent")
+    if external_agent is not None and (model is not None or thinking is not None):
+        raise ValueError("model/thinking select Prime models; use agent_args for an external agent")
+    if not isinstance(worktree, (bool, str)) or (
+        isinstance(worktree, str) and (not worktree.strip() or "\0" in worktree)
+    ):
+        raise TypeError("worktree must be a boolean or nonempty branch name without NUL characters")
+    if base is not None and (not isinstance(base, str) or not base.strip() or "\0" in base):
+        raise TypeError("base must be a nonempty Git reference without NUL characters")
+    if worktree and external_agent is None:
+        raise ValueError("worktree requires an external agent")
+    if base is not None and not worktree:
+        raise ValueError("base requires worktree")
     kwargs: dict[str, Any] = {"name": name}
     if model is not None:
         kwargs["model"] = model
     if thinking is not None:
         kwargs["thinking"] = thinking
+    if external_agent is not None:
+        kwargs["agent"] = external_agent
+    if agent_args is not None:
+        kwargs["agent_args"] = agent_args
+    if worktree:
+        kwargs["worktree"] = worktree
+    if base is not None:
+        kwargs["base"] = base
     # Wire type stays "rlm.run" so kernels and hosts of different versions stay compatible.
     payload = await host_request("rlm.run", {"prompt": prompt, "kwargs": kwargs})
-    return _spawn_handle_from_payload(payload)
+    handle = _spawn_handle_from_payload(payload)
+    if external_agent is not None and (handle.external is None or handle.external.agent != external_agent):
+        raise RuntimeError("rlm.spawn host did not start the requested external agent")
+    if worktree and (handle.external is None or handle.external.worktree is None):
+        raise RuntimeError("rlm.spawn host did not create the requested worktree")
+    return handle
 
 
 def _model_from_payload(payload: Any) -> RLMModel:
@@ -333,6 +487,7 @@ def _subagent_from_payload(payload: Any, operation: str = "rlm.list_subagents") 
         label=_optional_str_field(payload, "label", operation),
         last_activity_at=_optional_int_field(payload, "last_activity_at", operation),
         activity_stale_ms=_optional_int_field(payload, "activity_stale_ms", operation),
+        external=_external_from_payload(payload, operation),
     )
 
 
@@ -403,6 +558,7 @@ def _child_result_from_payload(payload: Any) -> RLMChildResult:
         duration_ms=_optional_int("duration_ms"),
         tool_use_count=_optional_int("tool_use_count"),
         replied_since_task=replied,
+        external=_external_from_payload(payload, "rlm.collect"),
     )
 
 
@@ -441,6 +597,55 @@ async def collect(
     if not isinstance(results, list):
         raise RuntimeError("rlm.collect returned an invalid results list")
     return [_child_result_from_payload(entry) for entry in results]
+
+
+async def _control_subagent(
+    target: str | RLMSpawnHandle | RLMSubagent,
+    action: str,
+    *,
+    keys: tuple[str, ...] = (),
+    lines: int = 80,
+) -> dict[str, Any]:
+    if not isinstance(lines, int) or isinstance(lines, bool) or not 1 <= lines <= 2000:
+        raise ValueError("lines must be an int between 1 and 2000")
+    if any(not isinstance(key, str) or not key or "\0" in key for key in keys):
+        raise TypeError("keys must be non-empty strings without NUL characters")
+    return await host_request(
+        "rlm.subagent.control",
+        {
+            "target": _collect_target_selector(target, "subagent target"),
+            "action": action,
+            "keys": list(keys),
+            "lines": lines,
+        },
+    )
+
+
+async def subagent_read(target: str | RLMSpawnHandle | RLMSubagent, *, lines: int = 80) -> dict[str, Any]:
+    """Read terminal evidence from an external subagent's pane."""
+    return await _control_subagent(target, "read", lines=lines)
+
+
+async def subagent_keys(target: str | RLMSpawnHandle | RLMSubagent, *keys: str) -> dict[str, Any]:
+    """Send logical keys to an external subagent's interactive pane."""
+    if not keys:
+        raise ValueError("at least one key is required")
+    return await _control_subagent(target, "keys", keys=keys)
+
+
+async def subagent_focus(target: str | RLMSpawnHandle | RLMSubagent) -> dict[str, Any]:
+    """Focus an external subagent's Herdr pane."""
+    return await _control_subagent(target, "focus")
+
+
+async def subagent_stop(target: str | RLMSpawnHandle | RLMSubagent) -> dict[str, Any]:
+    """Cancel an external subagent by closing its owned pane."""
+    return await _control_subagent(target, "stop")
+
+
+async def subagent_close(target: str | RLMSpawnHandle | RLMSubagent) -> dict[str, Any]:
+    """Close an external subagent's owned pane."""
+    return await _control_subagent(target, "close")
 
 
 RLM_PROGRESS_NOTE_MAX_LENGTH = 512
@@ -652,8 +857,19 @@ class _RLMNamespace:
         name: str,
         model: str | None = None,
         thinking: str | None = None,
+        agent: str | None = None,
+        agent_args: list[str] | None = None,
+        worktree: bool | str = False,
+        base: str | None = None,
     ) -> RLMSpawnHandle:
-        return await spawn(prompt, name=name, model=model, thinking=thinking)
+        return await spawn(prompt, name=name, model=model, thinking=thinking, agent=agent,
+                           agent_args=agent_args, worktree=worktree, base=base)
+
+    subagent_read = staticmethod(subagent_read)
+    subagent_keys = staticmethod(subagent_keys)
+    subagent_focus = staticmethod(subagent_focus)
+    subagent_stop = staticmethod(subagent_stop)
+    subagent_close = staticmethod(subagent_close)
 
     async def create_session(
         self,
@@ -718,6 +934,8 @@ sys.modules[__name__].__class__ = _NotCallableModule
 __all__ = [
     "BashHandle",
     "BashResult",
+    "ExternalSubagentInfo",
+    "ExternalSubagentOutput",
     "HarnessEntry",
     "HarnessScope",
     "HarnessState",
@@ -746,6 +964,11 @@ __all__ = [
     "rename",
     "rlm",
     "spawn",
+    "subagent_read",
+    "subagent_keys",
+    "subagent_focus",
+    "subagent_stop",
+    "subagent_close",
 ]
 
 # Lazily re-export the MCP base class. Kept lazy so `import rlm` never requires

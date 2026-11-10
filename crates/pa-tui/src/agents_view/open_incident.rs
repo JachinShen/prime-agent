@@ -95,6 +95,9 @@ impl AgentsViewMode {
     /// Drill into a nested child row: the open result carries the child's ancestor chain, so
     /// the tree re-expands to the row when the chat returns to the view.
     pub(super) fn open_subagent_row(&mut self, row: &AgentsViewRow) {
+        if self.focus_external(&row.summary) {
+            return;
+        }
         let ancestors = ancestor_session_ids(&self.rows, row.parent_identity.as_deref());
         if row.summary.get("activeSessionId").is_some() || row.summary.get("sessionFile").is_some()
         {
@@ -169,6 +172,9 @@ impl AgentsViewMode {
         selected_identity: Option<String>,
     ) {
         let summary = &row.summary;
+        if self.focus_external(summary) {
+            return;
+        }
         if let Some(active) = summary
             .get("activeSessionId")
             .and_then(Value::as_str)

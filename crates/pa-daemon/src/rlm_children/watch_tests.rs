@@ -424,6 +424,9 @@ async fn sessions_with_fake_child_subagents(
 async fn spawn_child(sessions: &SupervisorChildSessions) -> RlmSpawnHandle {
     sessions
         .spawn(RlmSpawnRequest {
+            agent: None,
+            agent_args: Vec::new(),
+            worktree: None,
             prompt: "f20 child task".to_string(),
             name: Some("f20-worker".to_string()),
             model: None,

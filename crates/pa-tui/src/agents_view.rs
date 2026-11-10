@@ -34,6 +34,7 @@ use crate::width::{pad_line, str_width};
 use crate::Line;
 mod data_input;
 
+mod external;
 mod open_incident;
 
 mod render;
@@ -219,6 +220,7 @@ fn saved_catalog_timeout_ms() -> u64 {
 }
 
 enum UiInput {
+    ExternalResult(Result<(), String>),
     Key(String),
     /// One paste (bracketed, or the reader's coalesced marker-less burst): the armed
     /// composer's editor takes it; the search field ignores it.
@@ -382,6 +384,7 @@ struct AgentsViewMode {
     /// The submitted reply the run loop dispatches: the send runs off the key loop
     /// with the client, and its keyed outcome re-enters as a `ReplyResult`.
     pending_reply: Option<ReplyRequest>,
+    pending_external_focus: Option<(String, String)>,
     /// One `/kill` view command the run loop dispatches; its keyed outcome re-enters
     /// as a `KillResult`.
     pending_kill: Option<KillRequest>,
@@ -547,6 +550,7 @@ impl AgentsViewMode {
             composer: Composer::Search,
             pending_rename: None,
             pending_reply: None,
+            pending_external_focus: None,
             pending_kill: None,
             pending_headline: None,
             pending_delete_action: None,
@@ -1000,6 +1004,13 @@ async fn run_agents_view_surface(
                         shells_fetch_at = Some(tokio::time::Instant::now());
                     }
                 }
+                UiInput::ExternalResult(result) => match result {
+                    Ok(()) => mode.set_status("Focused external subagent"),
+                    Err(error) => mode.set_status_tone(
+                        &format!("Failed to focus external subagent: {error}"),
+                        StatusTone::Error,
+                    ),
+                },
                 UiInput::RenameResult { rename, outcome } => {
                     mode.rename_result(rename, outcome);
                 }
@@ -1120,6 +1131,9 @@ async fn run_agents_view_surface(
                 // that ends without an exit key still captures its frames
                 // and returns instead of spinning forever.
                 UiInput::Done => mode.running = false,
+            }
+            if let Some(target) = mode.pending_external_focus.take() {
+                action_dispatches.push(external::spawn_focus(&client, ui_tx.clone(), target));
             }
             // The bash view's keys and wheel scrolls queue its action: dispatch
             // it after the input has been applied.

@@ -605,6 +605,22 @@ pub enum DaemonCommand {
         #[serde(flatten)]
         rest: JsonMap,
     },
+    /// Control an external child through its owning parent worker.
+    ControlExternalSubagent {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        active_session_id: String,
+        target: String,
+        action: String,
+        #[serde(default)]
+        keys: Vec<String>,
+        #[serde(default = "external_subagent_lines")]
+        lines: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(flatten)]
+        rest: JsonMap,
+    },
     DeleteRlmSubagent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -1300,9 +1316,38 @@ pub enum ForkPosition {
     At,
 }
 
+fn external_subagent_lines() -> u32 {
+    80
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_control_defaults_and_parent_routing_roundtrip() {
+        let command: DaemonCommand = serde_json::from_value(serde_json::json!({
+            "type": "control_external_subagent", "activeSessionId": "parent",
+            "target": "review", "action": "focus"
+        }))
+        .unwrap();
+        assert_eq!(
+            command,
+            DaemonCommand::ControlExternalSubagent {
+                id: None,
+                active_session_id: "parent".to_string(),
+                target: "review".to_string(),
+                action: "focus".to_string(),
+                keys: Vec::new(),
+                lines: 80,
+                message: None,
+                rest: JsonMap::default(),
+            }
+        );
+        rt::<DaemonCommand>(
+            r#"{"type":"control_external_subagent","activeSessionId":"parent","target":"review","action":"send","keys":[],"lines":80,"message":"follow up"}"#,
+        );
+    }
 
     #[test]
     fn prompt_family_roundtrip() {

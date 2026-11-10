@@ -173,6 +173,25 @@ fn wait_for_requests(requests: &Arc<Mutex<Vec<Value>>>, count: usize) {
     }
 }
 
+fn wait_for_report(requests: &Arc<Mutex<Vec<Value>>>, pane: &str, session_file: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if requests.lock().unwrap().iter().any(|request| {
+            request["method"] == "pane.report_agent"
+                && request["params"]["pane_id"] == pane
+                && request["params"]["agent_session_path"] == session_file
+        }) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no report for {session_file} in {pane}: {:?}",
+            requests.lock().unwrap()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Every record must carry the payload pane — the boot pane never wins.
 fn assert_no_boot_pane(requests: &Arc<Mutex<Vec<Value>>>, expected_pane: &str) {
     let frames = requests.lock().unwrap();
@@ -474,5 +493,116 @@ fn an_envless_session_stays_silent_until_its_attach_adopts_the_pane() {
         let release = frames.last().expect("the release");
         assert_eq!(release["method"], "pane.release_agent");
         assert_eq!(release["params"]["pane_id"], "w2:adopted");
+    }
+}
+
+/// Resume a live worker from another pane, then close the session that
+/// previously occupied the new pane. Its later quit must not erase the
+/// resumed session, and an observer must not steal or silence its binding.
+#[test]
+fn resuming_in_a_new_pane_moves_reports_and_retires_the_previous_session() {
+    let Some(kernel_python) = kernel_python() else {
+        return;
+    };
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let socket = dir.path().join("daemon.sock");
+    let herdr_socket = dir.path().join("herdr.sock");
+    let agent_dir = dir.path().join("agent");
+    let requests = fake_herdr(&herdr_socket);
+    let script = write_faux_script(dir.path(), &json!([{ "text": "done" }]));
+    let _daemon = spawn_supervisor(&socket, &agent_dir, &kernel_python, &herdr_socket);
+    wait_socket_ready(&socket);
+    let (mut client, _) = Client::connect(&socket);
+    let mut sessions = Vec::new();
+    for (name, pane) in [("old", "w1:old"), ("temporary", "w1:new")] {
+        let created = client.request(name, &json!({
+            "type": "create",
+            "env": pane_env(&herdr_socket, pane),
+            "config": { "cwd": dir.path(), "sessionDir": agent_dir.join("sessions"), "script": script },
+        }));
+        assert_eq!(created["success"], true, "{created}");
+        let id = created["data"]["activeSessionId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let file = created["data"]["sessionFile"].as_str().unwrap().to_string();
+        wait_for_report(&requests, pane, &file);
+        let attached = client.request(
+            &format!("attach-{name}"),
+            &json!({
+                "type": "attach", "activeSessionId": id, "clientId": "primary",
+                "env": pane_env(&herdr_socket, pane),
+            }),
+        );
+        assert_eq!(attached["success"], true, "{attached}");
+        let detached = client.request(
+            &format!("detach-{name}"),
+            &json!({
+                "type": "detach", "activeSessionId": id, "clientId": "primary",
+            }),
+        );
+        assert_eq!(detached["success"], true, "{detached}");
+        sessions.push((id, file));
+    }
+    let attached = client.request(
+        "resume-old",
+        &json!({
+            "type": "attach", "activeSessionId": sessions[0].0, "clientId": "primary",
+            "env": pane_env(&herdr_socket, "w1:new"),
+        }),
+    );
+    assert_eq!(attached["success"], true, "{attached}");
+    wait_for_report(&requests, "w1:new", &sessions[0].1);
+
+    let killed = client.request(
+        "kill-temporary",
+        &json!({
+            "type": "kill", "activeSessionId": sessions[1].0,
+        }),
+    );
+    assert_eq!(killed["success"], true, "{killed}");
+    assert!(requests
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|r| r["method"] != "pane.release_agent"));
+
+    let (mut watcher, _) = Client::connect(&socket);
+    for command in ["attach", "detach"] {
+        let response = watcher.request(
+            command,
+            &json!({
+                "type": command, "activeSessionId": sessions[0].0, "clientId": "observer",
+            }),
+        );
+        assert_eq!(response["success"], true, "{response}");
+    }
+    let prompted = client.request(
+        "turn",
+        &json!({
+            "type": "prompt", "activeSessionId": sessions[0].0, "message": "run",
+        }),
+    );
+    assert_eq!(prompted["success"], true, "{prompted}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let frames = requests.lock().unwrap().clone();
+        let resumed: Vec<_> = frames
+            .iter()
+            .filter(|r| {
+                r["params"]["agent_session_path"] == sessions[0].1
+                    && r["params"]["pane_id"] == "w1:new"
+            })
+            .collect();
+        if resumed.iter().any(|r| r["params"]["state"] == "working")
+            && resumed.last().unwrap()["params"]["state"] == "idle"
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "resumed turn never reported: {frames:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
     }
 }

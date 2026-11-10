@@ -59,6 +59,7 @@ fn live_feed_runner(engine: Arc<dyn SessionEngine>, socket: std::path::PathBuf) 
     let events = Arc::new(EventPump::new());
     let roster_pushes =
         crate::roster_activity::RosterPushQueue::spawn(crate::worker::RosterPushContext {
+            children: None,
             core: Arc::clone(&core),
             engine: std::sync::Arc::clone(&engine),
             user_bash,

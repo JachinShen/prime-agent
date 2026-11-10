@@ -390,8 +390,23 @@ impl TurnRunner {
             .iter()
             .filter_map(|item| item.admission_id.clone())
             .collect();
-        let items_done: Vec<oneshot::Sender<TurnSettle>> =
-            items.into_iter().filter_map(|item| item.done).collect();
+        let mut items_done: Vec<oneshot::Sender<TurnSettle>> = Vec::new();
+        let mut retry_external_notice = None;
+        for mut item in items {
+            if let Some(done) = item.done.take() {
+                items_done.push(done);
+            }
+            if item.custom_message.as_ref().is_some_and(|row| {
+                matches!(
+                    super::external_notices::external_notice_id(row),
+                    Ok(Some(_))
+                )
+            }) {
+                retry_external_notice = Some(item);
+            }
+        }
+        let external_notice_failure = Arc::new(Mutex::new(None::<String>));
+        let external_notice_failure_seen = Arc::clone(&external_notice_failure);
         let turn_outcome = Arc::new(std::sync::Mutex::new(None::<TurnSettle>));
         let turn_outcome_slot = Arc::clone(&turn_outcome);
         // Whether the engine surfaced any `agent_end` this run (the
@@ -435,7 +450,11 @@ impl TurnRunner {
             // success too: one row replaces TS's per-attempt error rows
             // (operator ruling 2026-09-23).
             let mut last_retry_error: Option<String> = None;
+            let mut external_notice_failed = false;
             let mut emit = |mut event: EngineEvent| -> bool {
+                if external_notice_failed {
+                    return false;
+                }
                 // A cancelled turn stops consuming its own events, except the frames
                 // TS still broadcasts for an interrupted turn: aborted row/tool settle
                 // frames and the trailing `Done` (a dropped Done hung `prompt_and_wait`
@@ -621,8 +640,12 @@ impl TurnRunner {
                         core.running_tool_calls.remove(tool_call_id);
                     }
                     EngineEvent::CustomMessage(message) => {
-                        if let Some(store) = core.store.as_mut() {
-                            let _ = store.persist_entry(
+                        let external_notice = matches!(
+                            super::external_notices::external_notice_id(message),
+                            Ok(Some(_))
+                        );
+                        let persisted = core.store.as_mut().map(|store| {
+                            store.persist_entry(
                                 "custom_message",
                                 json!({
                                     "customType": message.get("customType").cloned().unwrap_or(Value::Null),
@@ -630,7 +653,23 @@ impl TurnRunner {
                                     "display": message.get("display").cloned().unwrap_or(Value::Bool(true)),
                                     "details": message.get("details").cloned().unwrap_or(Value::Null),
                                 }),
-                            );
+                            )
+                        });
+                        if external_notice {
+                            let failure = match persisted {
+                                Some(Ok(_)) => None,
+                                Some(Err(error)) => {
+                                    Some(format!("Persist external child notice: {error:#}"))
+                                }
+                                None => Some(
+                                    "Persist external child notice: no session transcript".into(),
+                                ),
+                            };
+                            if let Some(error) = failure {
+                                external_notice_failed = true;
+                                *external_notice_failure_seen.lock().unwrap() = Some(error.clone());
+                                event = EngineEvent::Done(Err(error));
+                            }
                         }
                     }
                     EngineEvent::Compaction { entry, .. } => {
@@ -1005,7 +1044,7 @@ impl TurnRunner {
                 if let Some(result) = done_result {
                     *turn_outcome_slot.lock().unwrap() = Some(result);
                 }
-                true
+                !external_notice_failed
             };
             let aborted_probe = {
                 let core = Arc::clone(&core);
@@ -1055,6 +1094,14 @@ impl TurnRunner {
         let engine_reported_run_end = engine_agent_end.load(std::sync::atomic::Ordering::SeqCst);
         let more_queued = {
             let mut core = self.core.lock().unwrap();
+            if external_notice_failure.lock().unwrap().is_some() {
+                // A failed append is not consumption. Park the original notice and
+                // retain it in the settle checkpoint until an explicit resume/restart.
+                if let Some(item) = retry_external_notice {
+                    core.follow_up.push_front(item);
+                }
+                core.queued_input_suspended = true;
+            }
             let more_queued = !core.steering.is_empty() || !core.follow_up.is_empty();
             // Publish the note clear and idle transition atomically to
             // roster readers, which capture core then the engine note.

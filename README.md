@@ -127,6 +127,32 @@ Prime Agent is built for long-running work, especially for evaluations in resear
 - **Persistent goals:** `/goal` keeps an objective and its progress active across turns until it is completed, paused, or cleared.
 - **Bounded autonomous mode:** `/autonomous` continues within configured turn, token, and time budgets and can run user-defined quality gates. A passed gate checks only what that gate verifies; reaching a limit does not imply task success.
 
+## External subagents in Herdr
+
+From a daemon-backed Prime Agent session inside Herdr:
+
+```python
+h = await rlm.spawn("Review src/api error handling", name="review-api", agent="codex")
+# Completion wakes the parent agent automatically.
+results = await rlm.collect(h)
+await agent_message.send("Also review the retry path", receiver_role="child", receiver_name=h.name)
+```
+
+Each child gets a pane in the caller's workspace. Follow-up tasks reuse that pane
+and agent session. Herdr-supported agent kinds use the same interface; pass native
+CLI arguments through `agent_args=[...]`. Each turn writes its final answer to a
+separate `answer.md`; `collect` returns the answer and path. `rlm.subagent_read(h)`
+returns terminal evidence, and `/agents` can open the pane or send a reply.
+Approval prompts remain visible in the child pane and keep the task pending.
+
+Pass `worktree=True` to create a unique Git branch and isolated checkout, or
+`worktree="task/review-api", base="HEAD"` to choose the branch and starting ref.
+Herdr opens worktrees in their own workspace without changing focus. The handle,
+list and collect results expose `external.worktree.path`, `branch` and `repo_root`.
+Follow-up tasks reuse that checkout; closing or deleting the child keeps its
+checkout, branch and edits for inspection and merging. Agent permissions must
+allow writing the answer file in the parent's artifacts directory.
+
 ## Contributing
 
 Start with a GitHub Discussion for [general questions](https://github.com/PrimeIntellect-ai/prime-agent/discussions/categories/general), [bug reports](https://github.com/PrimeIntellect-ai/prime-agent/discussions/categories/bug-reports), and [feature requests](https://github.com/PrimeIntellect-ai/prime-agent/discussions/categories/feature-requests). Maintainers promote accepted work into Issues, and pull requests are reviewed from maintainers and vouched contributors.

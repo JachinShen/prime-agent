@@ -65,6 +65,12 @@ impl Worker {
             self.roster_delta_sequence
                 .load(std::sync::atomic::Ordering::SeqCst),
         );
+        summary.external_subagents = self
+            .agent_engine
+            .as_ref()
+            .and_then(|engine| engine.children.as_ref())
+            .map(|children| children.external_roster_summaries())
+            .unwrap_or_default();
         summary.worker_instance_id = (!self.config.worker_instance_id.is_empty())
             .then(|| self.config.worker_instance_id.clone());
         summary
@@ -328,6 +334,7 @@ pub(crate) struct RosterPushContext {
     pub(crate) worker_token: String,
     pub(crate) worker_instance_id: String,
     pub(crate) roster_delta_sequence: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) children: Option<std::sync::Arc<crate::rlm_children::SupervisorChildSessions>>,
 }
 
 pub(crate) async fn push_roster_delta(context: &RosterPushContext) {
@@ -343,6 +350,11 @@ pub(crate) async fn push_roster_delta(context: &RosterPushContext) {
         let (core, inputs) =
             SummaryInputs::lock(&context.core, context.engine.as_ref(), &context.user_bash);
         let mut summary = session_summary(&core, inputs);
+        summary.external_subagents = context
+            .children
+            .as_ref()
+            .map(|children| children.external_roster_summaries())
+            .unwrap_or_default();
         // The embedded counter is the pre-stamp value: every sequence
         // stamped before the snapshot is at or below it.
         summary.roster_delta_sequence = Some(
@@ -602,6 +614,7 @@ pub(crate) fn session_summary(core: &SessionCore, inputs: SummaryInputs) -> Sess
         // pulls embed the live counter in `summary_locked` instead.
         roster_delta_sequence: None,
         worker_instance_id: None,
+        external_subagents: Vec::new(),
         model: inputs.model,
         model_fallback_message: inputs.model_fallback_message,
         runtime_kind: Some(core.runtime_kind.clone()),

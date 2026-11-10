@@ -311,7 +311,7 @@ fn the_collapsed_dock_counts_paused_factory_runs_apart_from_running_ones() {
 
 /// ONE number: direct children and nested descendants summed, never a `direct, nested` pair.
 #[test]
-fn prompt_bar_subagent_segment_is_the_running_count_only() {
+fn prompt_bar_subagent_segment_combines_direct_and_nested_counts() {
     let theme = Theme::builtin("prime", ColorMode::TrueColor);
     // Two directly-running children, nothing nested.
     let dock = ActivityDock {
@@ -431,8 +431,40 @@ fn the_focused_dock_expands_into_one_row_per_group() {
     let texts = line_texts(&render_activity_dock(&collapsed, &theme, 120));
     assert_eq!(
         texts[1..],
-        [" ◆ 3 subagents  ·  ◷ 2 heartbeats · ◐ 1 paused  ·  ▸ 1 shell  ·  ⚙ 0 factory · ◐ 1 paused  ·  Pursuing goal (0s)"]
+        [" ◆ 4 subagents  ·  ◷ 2 heartbeats · ◐ 1 paused  ·  ▸ 1 shell  ·  ⚙ 0 factory · ◐ 1 paused  ·  Pursuing goal (0s)"]
     );
+}
+
+#[test]
+fn collapsed_subagents_include_idle_residents_and_color_their_activity() {
+    let theme = Theme::builtin("prime", ColorMode::TrueColor);
+    for (running, idle, label, color) in [
+        (0, 1, "◆ 1 subagent", ThemeColor::Warning),
+        (2, 1, "◆ 3 subagents", ThemeColor::Success),
+        (0, 0, "◆ 0 subagents", ThemeColor::Muted),
+    ] {
+        let dock = ActivityDock {
+            subagents_running_direct: running,
+            subagents_idle: idle,
+            subagents_inactive: 4,
+            ..ActivityDock::default()
+        };
+        let (frame, segments) = render_activity_dock_segments(&dock, &theme, 100);
+        assert_eq!(
+            line_texts(&frame)[1],
+            format!(" {label}  ·  ◷ 0 heartbeats  ·  ▸ 0 shells")
+        );
+        assert_eq!(
+            frame[1]
+                .iter()
+                .find(|span| span.content == label)
+                .expect("subagent label")
+                .style
+                .fg,
+            theme.fg_style(color).fg
+        );
+        assert_eq!(segments[0].cols, 1..1 + label.chars().count());
+    }
 }
 
 /// The selected row carries the ONE shared selection band across the full width (the hover's

@@ -506,9 +506,9 @@ pub(super) async fn create_session(
     let refused_path = session_path.clone();
     // The client's Herdr pane identity (the allowlisted `HERDR_*` env this
     // process runs with, e.g. inside a Herdr-managed pane) travels on the
-    // create ONLY: the session it creates reports for THIS pane, whatever
-    // tab the daemon booted in (attach adopts-if-absent instead — never
-    // rebinds).
+    // create: the session initially reports for THIS pane, whatever tab
+    // the daemon booted in. Interactive attaches refresh the binding
+    // when a live session is resumed in another terminal.
     let client_env = {
         let env = pa_types::daemon::herdr_env::collect_client_env(|key| std::env::var(key).ok());
         (!env.is_empty()).then_some(env)

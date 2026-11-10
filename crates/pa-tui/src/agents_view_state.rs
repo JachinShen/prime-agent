@@ -118,7 +118,9 @@ fn daemon_aliases(summary: &Value) -> Vec<String> {
     if let Some(active) = get_str(summary, "activeSessionId") {
         aliases.push(format!("active:{active}"));
     }
-    if let Some(id) = get_str(summary, "id") {
+    if let Some(id) =
+        get_str(summary, "id").filter(|_| get_str(summary, "backend") != Some("herdr"))
+    {
         aliases.push(format!("active:{id}"));
     }
     aliases
@@ -193,11 +195,14 @@ pub fn reconcile_unified_sessions(
 
     for entry in roster {
         let summary = entry.get("summary").cloned().unwrap_or(Value::Null);
-        // Only live rows render (TS `shouldShowAgentsViewSession`): a message-less draft never
-        // surfaces a roster row; subagent workers are live before their first message.
+        // Prime sessions must be live (TS `shouldShowAgentsViewSession`): a message-less
+        // draft stays hidden. Herdr children are logical runtimes, not Prime sessions,
+        // so their roster membership does not carry a Prime session lifecycle.
+        let external_child = get_str(&summary, "backend") == Some("herdr")
+            && get_str(&summary, "runtimeKind") == Some("subagent");
         let scope_root =
             scope_root_session.is_some_and(|root| get_str(&summary, "sessionId") == Some(root));
-        if get_str(&summary, "lifecycle") != Some("live") && !scope_root {
+        if !external_child && get_str(&summary, "lifecycle") != Some("live") && !scope_root {
             continue;
         }
         let status = entry
@@ -633,7 +638,9 @@ pub fn build_layout(rows: &[crate::agents_view_forest::AgentsViewRow], width: us
         .filter(|row| row.kind != crate::agents_view_forest::RowKind::Code)
         .collect();
     let cost = |row: &crate::agents_view_forest::AgentsViewRow| {
-        if row.kind == crate::agents_view_forest::RowKind::PersistentShell {
+        if row.kind == crate::agents_view_forest::RowKind::PersistentShell
+            || row.summary.get("backend").and_then(Value::as_str) == Some("herdr")
+        {
             "-".to_string()
         } else {
             format!("${:.2}", row.cost)

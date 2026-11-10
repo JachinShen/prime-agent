@@ -121,10 +121,8 @@ impl SessionUi {
         // dock — the shells group's running-only scoping, one lane over.
         let runs = crate::factory_view::parse_factory_runs(&self.factory_graph);
         let factory_runs = crate::factory_view::dock_factory_items(&runs);
-        // The dock's subagent count is the live running count only:
-        // idle and dead registry rows (passivated children the ledger
-        // still seeds) never bloat the collapsed indicator — the expanded
-        // row breaks them out.
+        // The collapsed count includes running and resident idle descendants;
+        // inactive registry rows remain in the expanded breakdown.
         crate::chrome::ActivityDock {
             subagents_running_direct: self.subagent_counts.running_direct,
             subagents_running_nested: self.subagent_counts.running_nested,

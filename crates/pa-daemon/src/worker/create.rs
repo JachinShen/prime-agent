@@ -482,13 +482,23 @@ impl Worker {
         }
         // Restore the persisted queue snapshot (crash/respawn recovery) from
         // the worker recovery journal.
-        let (steering, follow_up) = {
+        let (mut steering, mut follow_up) = {
             let guard = self.recovery.lock().unwrap();
             match guard.as_ref() {
                 Some(journal) => restore_queue_snapshot(journal, &self.config.active_session_id),
                 None => (VecDeque::new(), VecDeque::new()),
             }
         };
+        if let Err(error) =
+            self.restore_external_notice_dedup(&store, &mut steering, &mut follow_up)
+        {
+            return response_failure(
+                None,
+                "create",
+                &format!("restore external child notices: {error:#}"),
+                None,
+            );
+        }
         // The session's settings-seeded switches: a restarted session re-seeds
         // its auto-compaction flag from the persisted `compaction.enabled`.
         let (service_tier, steering_mode, follow_up_mode, auto_compaction_enabled) = {
@@ -668,6 +678,7 @@ impl Worker {
                 }));
                 let core = std::sync::Arc::clone(&self.core);
                 let events = self.events.clone();
+                let roster_pushes = self.roster_pushes.clone();
                 children.set_child_update_sink(std::sync::Arc::new(move |mut child| {
                     if let Some(parent_id) = core.lock().unwrap().rlm_child_id.clone() {
                         child["parentId"] = json!(parent_id);
@@ -677,6 +688,7 @@ impl Worker {
                         &events,
                         json!({ "type": "rlm_child_update", "child": child }),
                     );
+                    roster_pushes.push();
                 }));
             }
         }
@@ -711,6 +723,14 @@ impl Worker {
             .and_then(|env| serde_json::from_value(env).ok())
             .map(|env| crate::herdr::filter_client_env(&env))
             .unwrap_or_default();
+        if let Some(children) = self
+            .agent_engine
+            .as_ref()
+            .and_then(|engine| engine.children.as_ref())
+            .filter(|_| !client_env.is_empty())
+        {
+            children.set_herdr_env(client_env.clone());
+        }
         // TS keys the child skip on the SPAWN OVERRIDE ONLY
         // (`sessionOptionsOverride?.rlmDepth`), never the persisted file
         // depth: a resumed subagent file opened as a top-level session

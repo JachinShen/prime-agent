@@ -332,8 +332,8 @@ impl SessionUi {
             self.client.drop_direct();
         }
         // The primary interactive connection sends its Herdr pane identity
-        // with attach so an env-less session (e.g. cron-created) can adopt
-        // it (adopt-if-absent, never rebind — the daemon owns that rule);
+        // with attach so a resumed worker reports for this terminal,
+        // including when its original pane has already closed;
         // a client outside a Herdr pane sends nothing (the wire keeps its
         // tip shape).
         let client_env = {

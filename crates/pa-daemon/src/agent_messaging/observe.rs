@@ -7,6 +7,8 @@ use super::{
     AgentObserveMessagePreview, AgentObserveRecentMessagesResult, AgentObserveSummary, Arc,
     FamilyIdentity, SupervisorLink, Value, AGENT_OBSERVE_PREVIEW_MAX_CHARS,
 };
+use anyhow::Context;
+use pa_types::daemon::external_subagent::{ExternalSubagentInfo, ExternalSubagentOutput};
 
 /// `agent_observe.*` controller for daemon workers: message previews and
 /// full session summaries from the supervisor. The roster this controller
@@ -81,9 +83,18 @@ impl LinkAgentObserveController {
     /// The nuclear-family summaries every observe handler reads: one
     /// roster walk plus the registry join.
     async fn family_summaries(&self) -> anyhow::Result<Vec<AgentObserveSummary>> {
+        if let Some(children) = &self.children {
+            children.check_external_restore()?;
+        }
         let (sessions, identity) = self.roster_and_identity().await?;
         let child_ids = self.registry_child_active_ids().await;
-        Ok(summaries_from_roster(sessions, &identity, &child_ids))
+        let mut summaries = summaries_from_roster(sessions, &identity, &child_ids);
+        if let Some(children) = &self.children {
+            summaries.extend(external_summaries_from_roster(
+                children.external_roster_summaries(),
+            )?);
+        }
+        Ok(summaries)
     }
 
     /// The caller's own summary from its pushed state alone, no roster
@@ -104,13 +115,19 @@ impl LinkAgentObserveController {
 
 /// Resolve within the nuclear family using the registry's normalized id-suffix
 /// and exact-name contract. Exact active ids retain direct-lookup precedence.
-fn find_target(
+pub(super) fn find_target(
     mut summaries: Vec<AgentObserveSummary>,
     target: &str,
 ) -> anyhow::Result<Option<AgentObserveSummary>> {
     if let Some(at) = summaries
         .iter()
         .position(|summary| summary.active_session_id.as_deref() == Some(target))
+    {
+        return Ok(Some(summaries.remove(at)));
+    }
+    if let Some(at) = summaries
+        .iter()
+        .position(|summary| summary.rlm_child_id.as_deref() == Some(target))
     {
         return Ok(Some(summaries.remove(at)));
     }
@@ -122,6 +139,10 @@ fn find_target(
                 .as_deref()
                 .is_some_and(|id| crate::registry::selector_matches(id, target))
                 || crate::registry::selector_matches(&summary.session_id, target)
+                || summary
+                    .rlm_child_id
+                    .as_deref()
+                    .is_some_and(|id| crate::registry::selector_matches(id, target))
                 || summary.session_name.as_deref() == Some(target)
         })
         .collect();
@@ -132,6 +153,7 @@ fn find_target(
                 let id = summary
                     .active_session_id
                     .as_deref()
+                    .or(summary.rlm_child_id.as_deref())
                     .unwrap_or(&summary.session_id);
                 summary
                     .session_name
@@ -187,6 +209,36 @@ impl AgentObserveController for LinkAgentObserveController {
     ) -> anyhow::Result<AgentObserveRecentMessagesResult> {
         let agent = find_target(self.family_summaries().await?, target)?
             .ok_or_else(|| anyhow::anyhow!("agent {target} is not reachable"))?;
+        if agent.external.is_some() {
+            let children = self.children.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("external subagent observation has no runtime registry")
+            })?;
+            let child_id = agent.rlm_child_id.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("external subagent observation has no logical child id")
+            })?;
+            let data = children
+                .control_external(child_id, "read", Vec::new(), limit as u32)
+                .await?;
+            let output = data.get("output").ok_or_else(|| {
+                anyhow::anyhow!("external subagent read returned no terminal evidence")
+            })?;
+            let mut output: ExternalSubagentOutput = serde_json::from_value(output.clone())
+                .context("external subagent read returned invalid terminal evidence")?;
+            if output.source.is_empty() {
+                anyhow::bail!("external subagent read returned an empty evidence source");
+            }
+            let truncated = output.text.chars().count() > max_chars;
+            output.text = truncate_chars(&output.text, max_chars);
+            output.truncated |= truncated;
+            return Ok(AgentObserveRecentMessagesResult {
+                agent,
+                messages: Vec::new(),
+                limit,
+                max_chars,
+                truncated: output.truncated,
+                output: Some(output),
+            });
+        }
         // A family member with no live session (a passivated child) has no
         // worker to read; TS hydrates it first, the roster walk errors. A
         // live member whose `get_state` degraded shows the offline stub
@@ -244,6 +296,7 @@ impl AgentObserveController for LinkAgentObserveController {
             limit,
             max_chars,
             truncated: start > 0,
+            output: None,
         })
     }
 }
@@ -379,6 +432,84 @@ pub(super) fn summaries_from_roster(
                 rlm_child_id: row_str(&session, "rlmChildId").map(str::to_string),
                 first_message: row_str(&session, "firstMessage")
                     .map(|text| truncate_chars(text, AGENT_OBSERVE_PREVIEW_MAX_CHARS)),
+                external: None,
+            })
+        })
+        .collect()
+}
+
+/// Project only this parent's cached external registry; no Prime session is invented.
+pub(super) fn external_summaries_from_roster(
+    rows: Vec<Value>,
+) -> anyhow::Result<Vec<AgentObserveSummary>> {
+    rows.into_iter()
+        .map(|row| {
+            let child_id = row_str(&row, "rlmChildId")
+                .ok_or_else(|| anyhow::anyhow!("external observe row has no logical child id"))?;
+            let metadata = row
+                .get("external")
+                .ok_or_else(|| anyhow::anyhow!("external observe row has no runtime metadata"))?;
+            let external: ExternalSubagentInfo = serde_json::from_value(metadata.clone())
+                .context("external observe row has invalid runtime metadata")?;
+            if [
+                &external.agent,
+                &external.workspace_id,
+                &external.pane_id,
+                &external.terminal_id,
+                &external.agent_name,
+                &external.state,
+            ]
+            .iter()
+            .any(|value| value.trim().is_empty())
+            {
+                anyhow::bail!("external observe row has an empty runtime identity or state");
+            }
+            let task_state = row_str(&row, "taskState")
+                .filter(|state| matches!(*state, "running" | "completed" | "error" | "cancelled"))
+                .ok_or_else(|| anyhow::anyhow!("external observe row has invalid taskState"))?;
+            let activity = row_str(&row, "activity")
+                .filter(|activity| matches!(*activity, "working" | "idle"))
+                .ok_or_else(|| anyhow::anyhow!("external observe row has invalid activity"))?;
+            let resident = row
+                .get("runtimeResident")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("external observe row has invalid runtimeResident")
+                })?;
+            let status = if !resident {
+                AgentFamilyStatus::Inactive
+            } else if task_state == "running" || activity == "working" {
+                AgentFamilyStatus::Running
+            } else {
+                AgentFamilyStatus::Idle
+            };
+            Ok(AgentObserveSummary {
+                active_session_id: None,
+                session_id: String::new(),
+                session_name: row_str(&row, "sessionName").map(str::to_string),
+                relationship: Some(AgentFamilyRelationship::Child),
+                runtime_kind: Some("subagent".into()),
+                cwd: row_str(&row, "cwd").map(str::to_string),
+                status,
+                activity: match status {
+                    AgentFamilyStatus::Running => Some(AgentObserveActivity::Busy),
+                    AgentFamilyStatus::Idle => Some(AgentObserveActivity::Idle),
+                    AgentFamilyStatus::Inactive => None,
+                },
+                is_current: false,
+                is_streaming: false,
+                is_compacting: false,
+                attached_clients: 0,
+                message_count: None,
+                queued_count: 0,
+                is_session_active: status == AgentFamilyStatus::Running,
+                parent_active_session_id: row_str(&row, "parentActiveSessionId")
+                    .map(str::to_string),
+                parent_session_id: row_str(&row, "parentSessionId").map(str::to_string),
+                rlm_child_id: Some(child_id.into()),
+                first_message: row_str(&row, "firstMessage")
+                    .map(|text| truncate_chars(text, AGENT_OBSERVE_PREVIEW_MAX_CHARS)),
+                external: Some(external),
             })
         })
         .collect()

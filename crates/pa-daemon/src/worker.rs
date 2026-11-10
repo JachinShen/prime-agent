@@ -11,6 +11,7 @@ pub(crate) use config::WorkerConfig;
 // import.
 #[allow(unused_imports)]
 use env::KillCloseReason;
+mod external_notices;
 mod input;
 mod lifecycle;
 mod summary;
@@ -153,6 +154,8 @@ pub struct Worker {
     /// one refresh plus one queued re-arm per burst.
     pub(crate) model_catalog_refresh_gate: std::sync::Arc<crate::model_catalog::RefreshGate>,
     recovery: Arc<Mutex<Option<WorkerRecoveryJournal>>>,
+    /// Authenticated external notice admissions, including in-flight queue handoffs.
+    external_notices: Mutex<std::collections::HashSet<(PathBuf, String)>>,
     side_questions: crate::side_question::SideQuestionManager,
     /// Single-use peer-transport grants (worker memory only).
     pub(crate) peer_grants: PeerGrantStore,
@@ -673,6 +676,9 @@ impl Worker {
                     worker_token: worker_token.clone(),
                     worker_instance_id: config.worker_instance_id.clone(),
                     roster_delta_sequence: std::sync::Arc::clone(&roster_delta_sequence),
+                    children: agent_engine
+                        .as_ref()
+                        .and_then(|engine| engine.children.clone()),
                 });
             crate::roster_activity::spawn_roster_activity_watch(&events, roster_pushes.clone());
             if let Some(children) = agent_engine
@@ -767,6 +773,7 @@ impl Worker {
                 crate::model_catalog::RefreshGate::default(),
             ),
             recovery,
+            external_notices: Mutex::new(std::collections::HashSet::new()),
             side_questions,
             peer_grants: PeerGrantStore::new(),
             compaction,

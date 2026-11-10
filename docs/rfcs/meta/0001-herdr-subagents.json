@@ -1,0 +1,71 @@
+{
+  "affects": "prime-agent-runtime,pa-types,pa-core,pa-daemon,pa-tui,pa-telemetry",
+  "created": "2026-11-09",
+  "priority": "P1",
+  "related": [],
+  "requires": [],
+  "rfc": "0001",
+  "status": "implemented",
+  "tags": [
+    "architecture",
+    "subagent",
+    "herdr"
+  ],
+  "tasks": [
+    {
+      "depends_on": [],
+      "id": "T1",
+      "ref": null,
+      "status": "implemented",
+      "title": "API 与共享后端词汇"
+    },
+    {
+      "depends_on": [],
+      "id": "T2",
+      "ref": null,
+      "status": "implemented",
+      "title": "Herdr 客户端及 pane 生命周期"
+    },
+    {
+      "depends_on": [
+        "T1",
+        "T2"
+      ],
+      "id": "T3",
+      "ref": null,
+      "status": "implemented",
+      "title": "子会话注册、持久化与结算"
+    },
+    {
+      "depends_on": [
+        "T1"
+      ],
+      "id": "T4",
+      "ref": null,
+      "status": "implemented",
+      "title": "Collect、消息与观察路由"
+    },
+    {
+      "depends_on": [
+        "T1"
+      ],
+      "id": "T5",
+      "ref": null,
+      "status": "implemented",
+      "title": "名册、TUI 与 adoption telemetry"
+    },
+    {
+      "depends_on": [
+        "T3",
+        "T4",
+        "T5"
+      ],
+      "id": "T6",
+      "ref": null,
+      "status": "implemented",
+      "title": "产品路径与兼容性验证"
+    }
+  ],
+  "title": "通过 Herdr 管理原生外部 Subagent",
+  "updated": "2026-11-10"
+}

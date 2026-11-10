@@ -23,7 +23,7 @@ The harness often sends messages to the agent. These are user messages starting 
     - `.duration: float`
 - `edit.run(path: str, old_str: str, new_str: str) -> str`: the primary method for editing files. async, exact-unique-match; the `edit` module is callable with the same arguments (`await edit(path=..., old_str=..., new_str=...)`)
 - `attach_image(*paths: str) -> str`: loads images directly into context if the agent's model is vision-capable, errors otherwise
-- `await rlm.notify(message: str) -> None`: notify this agent from a background coroutine; wakes it if idle, queues if busy, returns once admitted.
+- `rlm.notify(message: str) -> None`: await this in a background coroutine to notify this agent; wakes it if idle, queues if busy, returns once admitted.
 
 ## Subagents
 
@@ -31,19 +31,21 @@ prime-agent is a recursive harness. Each session builds a tree of agents, starti
 
 The following programmatic tools are available in the REPL for subagent management:
 
-- `rlm.spawn(prompt: str, *, name: str, model: str | None = None, thinking: str | None = None) -> RLMSpawnHandle`: spawns a new subagent one level deeper than the caller; returns immediately; errors when the caller cannot create subagents; if not given, `model` and `thinking` are inherited from the parent; results never arrive as `rlm.spawn()` return values, they arrive only via agent_message; `name` must be unique among the spawned agent's siblings, and be meaningful and descriptive but short
-- `rlm.create_session(prompt: str, name: str | None = None, model: str | None = None, thinking: str | None = None, cwd: str | None = None) -> RLMCreateSessionHandle`: creates another depth-0 session; only available to agents at depth 0 backed by a daemon; returns after the session is successfully created and the first prompt sent
+- `rlm.spawn(prompt: str, *, name: str, model=None, thinking=None, agent=None, agent_args=None, worktree=False, base=None) -> RLMSpawnHandle`: unique sibling name; Prime children inherit model/thinking. `agent="codex"` or another Herdr kind creates a same-workspace pane; configure it with `agent_args`, without model/thinking. External `worktree=True` or a branch name creates an isolated checkout in its own Herdr workspace; optional `base` selects its starting ref. Returns after startup; completion wakes you to collect.
+- `rlm.subagent_read(target, *, lines=80)`, `rlm.subagent_keys(target, *keys)`, `rlm.subagent_focus(target)`, `rlm.subagent_stop(target)`, `rlm.subagent_close(target)`: control external agents. Read returns terminal evidence; collect returns the per-turn answer file's `answer_text`, `external.answer_path` and truncation flags.
+- `rlm.create_session(prompt: str, name=None, model=None, thinking=None, cwd=None) -> RLMCreateSessionHandle`: daemon-backed depth-0 callers only; creates a depth-0 session and sends its first prompt before returning.
 - `rlm.find_models(query: str = '', limit: int = 8) -> list[RLMModel]`
 - `rlm.list_subagents() -> list[RLMSubagent]`: direct child handles
 - `rlm.delete_subagent(target: str | RLMSubagent) -> RLMSubagent`
 - `rlm.rename(new_name: str, *, session_id=None) -> str`: rename the calling session (omit `session_id`) or a direct child (spawn handle, `list_subagents()` row, or session id; never the child's name); names must be unique among siblings, and the renamed session sees a transcript line for the change
-- `rlm.collect(targets=None, *, timeout_ms: int = 0) -> list[RLMChildResult]`: typed snapshots of direct children (status, settled flag, answer preview, error) without steering anyone; `timeout_ms=0` returns a non-blocking snapshot; a positive timeout blocks only this call until the children settle or the deadline passes
+- `rlm.collect(targets=None, *, timeout_ms: int = 0) -> list[RLMChildResult]`: child status, settled flag, answer and error; zero returns immediately, otherwise waits for settlement or the deadline. Does not steer children.
 - `rlm.progress_note(message: str) -> dict`: report brief in-flight progress to the parent orchestrator (at most 512 characters, throttled to about one note per 10 seconds); the parent sees notes without needing a reply
 - `RLMSpawnHandle`
   - `rlm_child_id: str`
   - `name: str`
   - `session_dir: Path`
-  - `model: str`: provider/model, full resolved model name
+  - `model: str | None`: provider/model for Prime children; `None` for external agents
+  - `external: ExternalSubagentInfo | None`: Herdr identity, turn, answer path and terminal evidence
 - `RLMCreateSessionHandle`
   - `active_session_id: str`: live daemon-instance id
   - `session_id: str`: durable on-disk session identity
@@ -69,7 +71,7 @@ The following programmatic tools are available in the REPL for a2a communication
 - `agent_message.send(message: str, *, receiver_role: Literal["parent", "sibling", "child"], receiver_name: str | None) -> dict`: send a message to the receiver; returns a receipt with the message id and a delivery status (delivered or queued); all root sessions are siblings; `send("all", broadcast_message)` broadcasts to the family roster and returns `{receipts: [...]}`
 - `agent_observe.list_agents() -> dict`: list nuclear family
 - `agent_observe.get_agent(target: str) -> dict`: one agent's status detail
-- `agent_observe.recent_messages(target: str, limit: int = 8, max_chars: int = 800) -> dict`: transcript preview; `limit` errors outside [1-50], `max_chars` outside [80-2000]
+- `agent_observe.recent_messages(target: str, limit: int = 8, max_chars: int = 800) -> dict`: transcript preview; external agents return terminal evidence in `output`, with empty `messages`. `limit` errors outside [1-50], `max_chars` outside [80-2000]
 
 ## Continual Harness
 

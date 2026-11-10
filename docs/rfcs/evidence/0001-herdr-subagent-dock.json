@@ -1,0 +1,95 @@
+{
+  "verified_at": "2026-11-10T14:00:32.696378+08:00",
+  "binary_sha256": "2ef682c1f8567b0c5edbcc1466b75a2c0559e21b8882c1123c8ff2e06f5dc702",
+  "workspace": "w2D",
+  "prime_pane": "w2D:p1",
+  "child_pane": "w2D:p2",
+  "child_id": "sub-8d9eec66",
+  "child_name": "demo-review",
+  "child_backend": "herdr",
+  "child_status": "idle",
+  "runtime_resident": true,
+  "child_prime_session_id": null,
+  "child_prime_lifecycle": null,
+  "parent_active_session_id": "0f451d2c3861",
+  "parent_session_id": "01a1c3ca-88fa-7481-b89d-1953eae2b351",
+  "parent_worker_pid": 61164,
+  "refreshed_frontend_only": true,
+  "playground_preserved": true,
+  "frames": {
+    "collapsed": {
+      "artifact": "/private/tmp/prime-agent-subagent-dock-live/collapsed.txt",
+      "contains": "◆ 1 subagent",
+      "sha256": "37e3769521e93be9c69ce50f1e04d6019a6a8870c3d907c233d4b01e91f62a1b"
+    },
+    "expanded": {
+      "artifact": "/private/tmp/prime-agent-subagent-dock-live/expanded.txt",
+      "contains": "0 running · 1 idle · 0 inactive",
+      "sha256": "55927a92e405a071b68949365adc0f9b9462e04a95e301cd4da775b1857729c6"
+    },
+    "scoped_list": {
+      "artifact": "/private/tmp/prime-agent-subagent-dock-live/subagents-view.txt",
+      "contains": "[codex] demo-review",
+      "sha256": "c5a31bbbce680912efda80b610c9b5113412ee8ee869f2b8280467331916efa9"
+    },
+    "scoped_breadcrumb": {
+      "artifact": "/private/tmp/prime-agent-subagent-dock-live/subagents-view.txt",
+      "contains": "Herdr Playground › subagents",
+      "sha256": "c5a31bbbce680912efda80b610c9b5113412ee8ee869f2b8280467331916efa9"
+    }
+  },
+  "focused_tests": {
+    "chrome": {
+      "passed": 27,
+      "log": "/private/tmp/prime-agent-subagent-dock-chrome.log"
+    },
+    "counts": {
+      "passed": 5,
+      "log": "/private/tmp/prime-agent-subagent-dock-counts.log"
+    },
+    "external": {
+      "passed": 8,
+      "log": "/private/tmp/prime-agent-subagent-dock-external.log"
+    },
+    "state": {
+      "passed": 16,
+      "log": "/private/tmp/prime-agent-subagent-dock-state.log"
+    },
+    "scope": {
+      "passed": 1,
+      "log": "/private/tmp/prime-agent-subagent-dock-scope.log"
+    }
+  },
+  "focused_passed": 57,
+  "native_parity": {
+    "ts_revision": "7d442aafa985f9342134fac16c2ef41f03fb45c1",
+    "matched_top_level_rows": 6,
+    "matched_native_actions": 4,
+    "matched_roster_entries": 4,
+    "native_receipt_target_bytes_equal": true,
+    "known_rendering_differences": [
+      {
+        "width": 48,
+        "identity": "agent:/x/idle.jsonl#review",
+        "difference": "native child indent: Rust4 vs TS2 (existing before feature)"
+      },
+      {
+        "width": 56,
+        "identity": "agent:/x/idle.jsonl#review",
+        "difference": "native child indent: Rust4 vs TS2 (existing before feature)"
+      }
+    ],
+    "scope": "Text cells at 48/56 columns; native open/reply selection and native receipt target; excludes full-frame styling and Herdr feature"
+  },
+  "scoped_clippy": {
+    "passed": true,
+    "log": "/private/tmp/prime-agent-subagent-dock-clippy-scoped.log",
+    "baseline_command_line_allowances": [
+      "unknown-lints",
+      "clippy::duration_suboptimal_units",
+      "clippy::cast_possible_wrap",
+      "clippy::collapsible_match"
+    ]
+  },
+  "full_workspace_merge_gates": "Known baseline limitations; see verification document."
+}

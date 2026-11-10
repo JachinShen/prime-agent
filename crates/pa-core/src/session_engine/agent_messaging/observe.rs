@@ -2,6 +2,7 @@
 //! observe summary and preview types, the controller trait, the limit
 //! clamps, and the host-handler registration.
 use super::{host_handler, json, AgentFamilyRelationship, Future, HostRequestHandlers, Value};
+use pa_types::daemon::external_subagent::{ExternalSubagentInfo, ExternalSubagentOutput};
 
 /// The family lifecycle status every observation row carries: `running`
 /// while the agent has work in flight, `idle` for a resident-but-quiet
@@ -86,6 +87,8 @@ pub struct AgentObserveSummary {
     /// The session's first user message, preview-capped (an inactive
     /// child's identity signal; TS `firstMessage`).
     pub first_message: Option<String>,
+    /// External runtime identity; absent for Prime worker sessions.
+    pub external: Option<ExternalSubagentInfo>,
 }
 
 impl AgentObserveSummary {
@@ -127,6 +130,13 @@ impl AgentObserveSummary {
         if let Some(first_message) = &self.first_message {
             row["firstMessage"] = json!(first_message);
         }
+        if let Some(external) = &self.external {
+            row["activeSessionId"] = Value::Null;
+            row["sessionId"] = Value::Null;
+            row["backend"] = json!("herdr");
+            row["id"] = json!(self.rlm_child_id);
+            row["external"] = json!(external);
+        }
         row
     }
 }
@@ -150,6 +160,8 @@ pub struct AgentObserveRecentMessagesResult {
     /// Whether older messages exist beyond the returned window
     /// (TS `truncated: startIndex > 0`).
     pub truncated: bool,
+    /// Bounded terminal evidence for an external runtime, never an assistant message.
+    pub output: Option<ExternalSubagentOutput>,
 }
 
 /// One bounded message preview.
@@ -403,13 +415,24 @@ pub fn register_agent_observe_host_handlers<C: AgentObserveController + 'static>
                         normalize_observe_max_chars(max_chars)?,
                     )
                     .await?;
-                Ok(json!({
+                let mut result = json!({
                     "agent": recent.agent.to_value(),
                     "messages": recent.messages.iter().map(preview_value).collect::<Vec<_>>(),
                     "limit": recent.limit,
                     "maxChars": recent.max_chars,
                     "truncated": recent.truncated,
-                }))
+                });
+                if let Some(output) = &recent.output {
+                    let mut evidence = json!(output);
+                    evidence["kind"] = json!("terminal");
+                    if let Some(external) = &recent.agent.external {
+                        evidence["turn_id"] = json!(external.turn);
+                        evidence["pane_id"] = json!(external.pane_id);
+                        evidence["agent_kind"] = json!(external.agent);
+                    }
+                    result["output"] = evidence;
+                }
+                Ok(result)
             })
         }),
     );

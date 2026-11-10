@@ -632,6 +632,9 @@ impl RlmSubagentHost for InlineHost {
     fn spawn(&self, request: RlmSpawnRequest) -> RlmHostFuture<RlmSpawnHandle> {
         let node = Arc::clone(&self.0);
         Box::pin(async move {
+            if request.agent.is_some() || request.worktree.is_some() {
+                anyhow::bail!("External subagents require a daemon-backed Herdr session");
+            }
             if node.depth >= node.max_depth {
                 return Err(rlm_depth_limit_error(node.depth, node.max_depth));
             }
@@ -852,10 +855,11 @@ impl RlmSubagentHost for InlineHost {
             let driver = tokio::spawn(drive_child(Arc::clone(&child)));
             *child.driver.lock().await = Some(driver);
             Ok(RlmSpawnHandle {
+                external: None,
                 rlm_child_id: child_id,
                 name,
                 session_dir: child_node.session_dir.clone(),
-                model: selector,
+                model: Some(selector),
             })
         })
     }
@@ -938,6 +942,7 @@ impl RlmSubagentHost for InlineHost {
                     let state = child.state.lock().await;
                     all_settled &= !unsettled;
                     results.push(RlmChildResult {
+                        external: None,
                         rlm_child_id: child.rlm_child_id.clone(),
                         session_name: Some(
                             child
@@ -1042,6 +1047,7 @@ fn roster_entry(
     unsettled: bool,
 ) -> RlmSubagentEntry {
     RlmSubagentEntry {
+        external: None,
         rlm_child_id: child.rlm_child_id.clone(),
         active_session_id: Some(child.node.session_id.clone()),
         session_id: Some(child.node.session_id.clone()),
@@ -1272,6 +1278,9 @@ mod tests {
         Arc::get_mut(&mut node).unwrap().max_depth = 2;
         let gate = node.spawn_gate.lock().await;
         let mut spawn = InlineHost(Arc::clone(&node)).spawn(RlmSpawnRequest {
+            agent: None,
+            agent_args: Vec::new(),
+            worktree: None,
             prompt: "finish the task".to_string(),
             name: Some("late".to_string()),
             model: None,

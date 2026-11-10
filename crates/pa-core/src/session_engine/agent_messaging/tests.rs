@@ -26,6 +26,7 @@ fn observe_rows_carry_the_typed_status_and_activity() {
         parent_session_id: None,
         rlm_child_id: None,
         first_message: None,
+        external: None,
     };
     let value = row.to_value();
     assert_eq!(value["status"], "running");
@@ -299,6 +300,10 @@ async fn message_host_handler_round_trip() {
     assert_eq!(receipt["deliveryStatus"], "delivered");
     assert_eq!(receipt["receiverRole"], "sibling");
     assert!(receipt["id"].as_str().unwrap().starts_with("agentmsg_"));
+    if let Ok(path) = std::env::var("PA_NATIVE_RECEIPT_SNAPSHOT") {
+        // Optional production-handler wire capture for the TS differential verifier.
+        std::fs::write(path, serde_json::to_vec(&receipt["target"]).unwrap()).unwrap();
+    }
 
     let by_id = send_request(
         &send,
@@ -471,6 +476,7 @@ fn observe_row(active_session_id: &str, is_current: bool) -> AgentObserveSummary
         parent_session_id: None,
         rlm_child_id: None,
         first_message: None,
+        external: None,
     }
 }
 
@@ -485,6 +491,32 @@ fn child_row() -> AgentObserveSummary {
         rlm_child_id: Some("sub-kid-1".to_string()),
         first_message: Some("the task prompt".to_string()),
         ..observe_row("kid-1", false)
+    }
+}
+
+fn external_observe_row() -> AgentObserveSummary {
+    use pa_types::daemon::external_subagent::ExternalSubagentInfo;
+
+    AgentObserveSummary {
+        active_session_id: None,
+        session_id: String::new(),
+        session_name: Some("review".into()),
+        rlm_child_id: Some("sub-external".into()),
+        external: Some(ExternalSubagentInfo {
+            agent: "codex".into(),
+            workspace_id: "w1".into(),
+            pane_id: "w1:p2".into(),
+            terminal_id: "term-2".into(),
+            agent_name: "pa-review".into(),
+            turn: 2,
+            state: "working".into(),
+            answer_path: Some("/agent/sub-external/turns/002/answer.md".into()),
+            answer_truncated: false,
+            output: None,
+            notification_error: None,
+            worktree: None,
+        }),
+        ..child_row()
     }
 }
 
@@ -512,22 +544,46 @@ impl AgentObserveController for StaticObserveController {
         &self,
         target: &str,
     ) -> impl Future<Output = anyhow::Result<Option<AgentObserveSummary>>> + Send {
-        std::future::ready(Ok((target == "kid-1").then(child_row)))
+        std::future::ready(Ok(match target {
+            "kid-1" => Some(child_row()),
+            "sub-external" => Some(external_observe_row()),
+            _ => None,
+        }))
     }
 
     fn recent_messages(
         &self,
-        _target: &str,
+        target: &str,
         limit: usize,
         max_chars: usize,
     ) -> impl Future<Output = anyhow::Result<AgentObserveRecentMessagesResult>> + Send {
-        std::future::ready(Ok(AgentObserveRecentMessagesResult {
-            agent: child_row(),
-            messages: (0..3).map(observe_preview).collect(),
-            limit,
-            max_chars,
-            truncated: true,
-        }))
+        let result = if target == "sub-external" {
+            AgentObserveRecentMessagesResult {
+                agent: external_observe_row(),
+                messages: Vec::new(),
+                limit,
+                max_chars,
+                truncated: true,
+                output: Some(
+                    pa_types::daemon::external_subagent::ExternalSubagentOutput {
+                        text: "terminal evidence".into(),
+                        source: "recent-unwrapped".into(),
+                        revision: 42,
+                        truncated: true,
+                    },
+                ),
+            }
+        } else {
+            AgentObserveRecentMessagesResult {
+                agent: child_row(),
+                messages: (0..3).map(observe_preview).collect(),
+                limit,
+                max_chars,
+                truncated: true,
+                output: None,
+            }
+        };
+        std::future::ready(Ok(result))
     }
 }
 
@@ -589,4 +645,84 @@ async fn observe_recent_returns_the_ts_envelope() {
     assert_eq!(response["maxChars"], 90);
     assert_eq!(response["truncated"], true);
     assert_eq!(response["messages"].as_array().map(Vec::len), Some(3));
+}
+
+#[tokio::test]
+async fn external_observe_keeps_terminal_evidence_separate_from_assistant_messages() {
+    let mut handlers = HostRequestHandlers::default();
+    register_agent_observe_host_handlers(
+        std::sync::Arc::new(StaticObserveController),
+        &mut handlers,
+    );
+    let get = handlers.get("agent_observe.get").unwrap();
+    let got = send_request(get, json!({ "target": "sub-external" })).unwrap();
+    let mut expected = external_observe_row().to_value();
+    expected["activeSessionId"] = Value::Null;
+    expected["sessionId"] = Value::Null;
+    expected["backend"] = json!("herdr");
+    expected["id"] = json!("sub-external");
+    expected["external"] = json!(external_observe_row().external);
+    assert_eq!(got, json!({ "agent": expected }));
+    let recent = handlers.get("agent_observe.recent").unwrap();
+    let response = send_request(recent, json!({ "target": "sub-external" })).unwrap();
+    assert_eq!(
+        response,
+        json!({
+            "agent": expected,
+            "messages": [],
+            "limit": 8,
+            "maxChars": 800,
+            "truncated": true,
+            "output": {
+                "kind": "terminal", "text": "terminal evidence", "source": "recent-unwrapped",
+                "revision": 42, "truncated": true, "turn_id": 2, "pane_id": "w1:p2",
+                "agent_kind": "codex",
+            },
+        })
+    );
+}
+
+#[test]
+fn external_receipts_keep_logical_child_identity_and_kernel_display_without_fake_sessions() {
+    let receipt = AgentMessageReceipt {
+        id: "agentmsg_external".to_string(),
+        target: "child-review".to_string(),
+        target_session_id: None,
+        target_session_name: Some("review".to_string()),
+        target_runtime_kind: Some("external".to_string()),
+        message: "follow up".to_string(),
+        delivery_status: AgentMessageDeliveryStatus::Queued,
+        delivery_mode: Some("followUp"),
+        receiver_role: Some(AgentFamilyRelationship::Child),
+        delivered_at: None,
+        queued_at: Some("now".to_string()),
+    };
+    let value = receipt_value(&receipt);
+    assert_eq!(
+        value,
+        json!({
+            "id":"agentmsg_external", "source": AGENT_MESSAGE_SOURCE,
+            "target": {"activeSessionId":null, "sessionId":null, "rlmChildId":"child-review",
+                "backend":"herdr", "sessionName":"review", "runtimeKind":"external"},
+            "message":"follow up", "deliveryStatus":"queued", "deliveryMode":"followUp",
+            "receiverRole":"child", "deliveredAt":null, "queuedAt":"now",
+        })
+    );
+    use crate::kernel::shared::{
+        KernelSentAgentMessage, ReceiverRole, SentAgentMessageTarget, SentDeliveryStatus,
+    };
+    assert_eq!(
+        crate::kernel::shared::parse_sent_agent_message(&value),
+        Some(KernelSentAgentMessage {
+            id: "agentmsg_external".to_string(),
+            message: "follow up".to_string(),
+            delivery_status: SentDeliveryStatus::Queued,
+            receiver_role: Some(ReceiverRole::Child),
+            target: SentAgentMessageTarget {
+                active_session_id: String::new(),
+                session_id: String::new(),
+                session_name: Some("review".to_string())
+            },
+        })
+    );
 }

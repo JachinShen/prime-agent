@@ -8,6 +8,41 @@ use pa_tui::interactive::OnboardingSink;
 use serde_json::Map;
 
 #[test]
+fn direct_chat_hands_its_subagent_scope_to_the_agents_view() {
+    let scope = pa_tui::agents_view::AgentsViewScope {
+        session_id: Some("parent".to_string()),
+        active_session_id: Some("parent-live".to_string()),
+        session_name: Some("Review".to_string()),
+    };
+    let mut outcome = InteractiveOutcome {
+        active_session_id: "parent-live".to_string(),
+        session_id: "parent".to_string(),
+        return_to_agents_view: true,
+        agents_view_scope: Some(scope.clone()),
+        ..InteractiveOutcome::default()
+    };
+    assert_eq!(
+        AgentsViewStart::from(&outcome),
+        AgentsViewStart {
+            anchor: Some("parent".to_string()),
+            scope: Some(scope),
+            notice: None,
+        }
+    );
+    // An unavailable startup attach enters the plain view with its diagnostic.
+    outcome.session_id.clear();
+    outcome.agents_view_scope = None;
+    outcome.agents_view_notice = Some("Session unavailable".to_string());
+    assert_eq!(
+        AgentsViewStart::from(&outcome),
+        AgentsViewStart {
+            notice: Some("Session unavailable".to_string()),
+            ..AgentsViewStart::default()
+        }
+    );
+}
+
+#[test]
 fn session_flags_map_to_selections() {
     let mut session = crate::mode::SessionOptions::default();
     let dir = tempfile::TempDir::new().expect("temp dir");

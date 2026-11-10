@@ -40,6 +40,7 @@ pub fn command_plane(command_type: &str) -> DaemonCommandPlane {
         | "kill_kernel_bash"
         | "cancel_rlm_child"
         | "delete_rlm_subagent"
+        | "control_external_subagent"
         | "wait_for_idle"
         | "wait_for_headless_completion"
         | "get_session_header"

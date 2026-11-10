@@ -1,0 +1,383 @@
+{
+  "root": "/private/tmp/pa-herdr-resume-8su_u91d",
+  "checks": [
+    {
+      "phase": "fresh_tui",
+      "pane": {
+        "agent": "prime-agent",
+        "agent_status": "idle",
+        "cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "focused": false,
+        "foreground_cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "pane_id": "wK:pQ",
+        "revision": 2,
+        "scroll": {
+          "max_offset_from_bottom": 0,
+          "offset_from_bottom": 0,
+          "viewport_rows": 61
+        },
+        "tab_id": "wK:t1",
+        "terminal_id": "term_65fd67fe0f90c82",
+        "terminal_title": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent ",
+        "terminal_title_stripped": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent",
+        "workspace_id": "wK"
+      }
+    },
+    {
+      "phase": "resume_live_worker_from_closed_pane",
+      "pane": {
+        "agent": "prime-agent",
+        "agent_status": "idle",
+        "cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "focused": false,
+        "foreground_cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "pane_id": "wK:pQ",
+        "revision": 2,
+        "scroll": {
+          "max_offset_from_bottom": 0,
+          "offset_from_bottom": 0,
+          "viewport_rows": 61
+        },
+        "tab_id": "wK:t1",
+        "terminal_id": "term_65fd67fe0f90c82",
+        "terminal_title": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent ",
+        "terminal_title_stripped": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent",
+        "workspace_id": "wK"
+      }
+    },
+    {
+      "phase": "detached_frontend_quit",
+      "pane": {
+        "agent": "prime-agent",
+        "agent_status": "idle",
+        "cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "focused": false,
+        "foreground_cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "pane_id": "wK:pQ",
+        "revision": 2,
+        "scroll": {
+          "max_offset_from_bottom": 0,
+          "offset_from_bottom": 0,
+          "viewport_rows": 61
+        },
+        "tab_id": "wK:t1",
+        "terminal_id": "term_65fd67fe0f90c82",
+        "terminal_title": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent ",
+        "terminal_title_stripped": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent",
+        "workspace_id": "wK"
+      }
+    },
+    {
+      "phase": "late_reporter_quit",
+      "pane": {
+        "agent": "prime-agent",
+        "agent_status": "idle",
+        "cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "focused": false,
+        "foreground_cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "pane_id": "wK:pQ",
+        "revision": 2,
+        "scroll": {
+          "max_offset_from_bottom": 0,
+          "offset_from_bottom": 0,
+          "viewport_rows": 61
+        },
+        "tab_id": "wK:t1",
+        "terminal_id": "term_65fd67fe0f90c82",
+        "terminal_title": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent ",
+        "terminal_title_stripped": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent",
+        "workspace_id": "wK"
+      }
+    },
+    {
+      "phase": "resumed_turn_settled",
+      "pane": {
+        "agent": "prime-agent",
+        "agent_status": "done",
+        "cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "focused": false,
+        "foreground_cwd": "/private/tmp/pa-herdr-resume-8su_u91d",
+        "pane_id": "wK:pQ",
+        "revision": 2,
+        "scroll": {
+          "max_offset_from_bottom": 0,
+          "offset_from_bottom": 0,
+          "viewport_rows": 61
+        },
+        "tab_id": "wK:t1",
+        "terminal_id": "term_65fd67fe0f90c82",
+        "terminal_title": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent ",
+        "terminal_title_stripped": "env PRIME_AGENT_CODING_AGENT_DIR=/private/tmp/pa-herdr-resume-8su_u91d/agent",
+        "workspace_id": "wK"
+      }
+    }
+  ],
+  "cleanup_errors": [],
+  "passed": true,
+  "wire": [
+    {
+      "request": {
+        "id": "herdr:pi:1794224733253:f1d04c0",
+        "method": "pane.report_agent",
+        "params": {
+          "pane_id": "wK:pP",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "state": "idle",
+          "seq": 1794224733253000,
+          "agent_session_path": "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl",
+          "resume_argv": [
+            "prime-agent",
+            "--resume",
+            "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl"
+          ]
+        }
+      },
+      "response": {
+        "id": "herdr:pi:1794224733253:f1d04c0",
+        "result": {
+          "type": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "id": "herdr:pi:1794224733266:fe51f50",
+        "method": "pane.report_agent",
+        "params": {
+          "pane_id": "wK:pP",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "state": "working",
+          "seq": 1794224733266000,
+          "agent_session_path": "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl",
+          "resume_argv": [
+            "prime-agent",
+            "--resume",
+            "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl"
+          ]
+        }
+      },
+      "response": {
+        "id": "herdr:pi:1794224733266:fe51f50",
+        "result": {
+          "type": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "id": "herdr:pi:1794224733298:11d1f360",
+        "method": "pane.report_agent",
+        "params": {
+          "pane_id": "wK:pP",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "state": "idle",
+          "seq": 1794224733298000,
+          "agent_session_path": "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl",
+          "resume_argv": [
+            "prime-agent",
+            "--resume",
+            "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl"
+          ]
+        }
+      },
+      "response": {
+        "id": "herdr:pi:1794224733298:11d1f360",
+        "result": {
+          "type": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "id": "herdr:pi:1794224733377:167da120",
+        "method": "pane.report_agent",
+        "params": {
+          "pane_id": "wK:pQ",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "state": "idle",
+          "seq": 1794224733377000,
+          "agent_session_path": "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bcb7-76da-b109-fb028bd94922.jsonl",
+          "resume_argv": [
+            "prime-agent",
+            "--resume",
+            "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bcb7-76da-b109-fb028bd94922.jsonl"
+          ]
+        }
+      },
+      "response": {
+        "id": "herdr:pi:1794224733377:167da120",
+        "result": {
+          "type": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "id": "herdr:pi:1794224735442:1a641698",
+        "method": "pane.report_agent",
+        "params": {
+          "pane_id": "wK:pQ",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "state": "idle",
+          "seq": 1794224735442000,
+          "agent_session_path": "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bcb7-76da-b109-fb028bd94922.jsonl",
+          "resume_argv": [
+            "prime-agent",
+            "--resume",
+            "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bcb7-76da-b109-fb028bd94922.jsonl"
+          ]
+        }
+      },
+      "response": {
+        "id": "herdr:pi:1794224735442:1a641698",
+        "result": {
+          "type": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "id": "herdr:pi:1794224735628:25705da8",
+        "method": "pane.report_agent",
+        "params": {
+          "pane_id": "wK:pQ",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "state": "idle",
+          "seq": 1794224735628000,
+          "agent_session_path": "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-c551-767a-82eb-905c05699c31.jsonl",
+          "resume_argv": [
+            "prime-agent",
+            "--resume",
+            "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-c551-767a-82eb-905c05699c31.jsonl"
+          ]
+        }
+      },
+      "response": {
+        "id": "herdr:pi:1794224735628:25705da8",
+        "result": {
+          "type": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "id": "herdr:pi:1794224736009:908418",
+        "method": "pane.report_agent",
+        "params": {
+          "pane_id": "wK:pQ",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "state": "idle",
+          "seq": 1794224736009000,
+          "agent_session_path": "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl",
+          "resume_argv": [
+            "prime-agent",
+            "--resume",
+            "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl"
+          ]
+        }
+      },
+      "response": {
+        "id": "herdr:pi:1794224736009:908418",
+        "result": {
+          "type": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "id": "herdr:pi:release:1794224736097:5cee0a0",
+        "method": "pane.release_agent",
+        "params": {
+          "pane_id": "wK:pQ",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "seq": 1794224735628001
+        }
+      },
+      "response": {
+        "id": "herdr:pi:release:1794224736097:5cee0a0",
+        "result": {
+          "type": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "id": "herdr:pi:1794224736137:832b970",
+        "method": "pane.report_agent",
+        "params": {
+          "pane_id": "wK:pQ",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "state": "working",
+          "seq": 1794224736137000,
+          "agent_session_path": "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl",
+          "resume_argv": [
+            "prime-agent",
+            "--resume",
+            "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl"
+          ]
+        }
+      },
+      "response": {
+        "id": "herdr:pi:1794224736137:832b970",
+        "result": {
+          "type": "ok"
+        }
+      }
+    },
+    {
+      "request": {
+        "id": "herdr:pi:1794224736146:8b7ac98",
+        "method": "pane.report_agent",
+        "params": {
+          "pane_id": "wK:pQ",
+          "source": "herdr:pi",
+          "agent": "prime-agent",
+          "state": "idle",
+          "seq": 1794224736146000,
+          "agent_session_path": "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl",
+          "resume_argv": [
+            "prime-agent",
+            "--resume",
+            "/private/tmp/pa-herdr-resume-8su_u91d/agent/sessions/01a1c020-bc3a-76c4-aea8-a94680320247.jsonl"
+          ]
+        }
+      },
+      "response": {
+        "id": "herdr:pi:1794224736146:8b7ac98",
+        "result": {
+          "type": "ok"
+        }
+      }
+    }
+  ],
+  "parity_diff": {
+    "reference": "TS v0.9.8, packages/coding-agent/src/core/extensions/builtin/herdr-agent-state.ts",
+    "shared_lifecycle_fields_equal_after_canonicalization": true,
+    "canonical_lifecycle_bytes": "[{\"method\":\"pane.report_agent\",\"params\":{\"agent\":\"prime-agent\",\"agent_session_path\":\"/tmp/old.jsonl\",\"pane_id\":\"test-pane\",\"source\":\"herdr:pi\",\"state\":\"idle\"}},{\"method\":\"pane.report_agent\",\"params\":{\"agent\":\"prime-agent\",\"agent_session_path\":\"/tmp/old.jsonl\",\"pane_id\":\"test-pane\",\"source\":\"herdr:pi\",\"state\":\"working\"}},{\"method\":\"pane.report_agent\",\"params\":{\"agent\":\"prime-agent\",\"agent_session_path\":\"/tmp/old.jsonl\",\"pane_id\":\"test-pane\",\"source\":\"herdr:pi\",\"state\":\"idle\"}}]",
+    "replacement_hook_methods": [
+      "pane.report_agent",
+      "pane.report_agent",
+      "pane.report_agent",
+      "pane.report_agent",
+      "pane.release_agent"
+    ],
+    "existing_rust_extra_field": [
+      "resume_argv"
+    ],
+    "intentional_fix": [
+      "interactive attach replaces the pane binding; detach silences the old reporter",
+      "release uses the sequence reserved by its own last acknowledged report",
+      "complete id-matched acknowledgements are required; transport errors are logged"
+    ],
+    "scope": "TS extension hooks and actual Rust socket traffic; no new Prime Agent rendering changed"
+  }
+}

@@ -85,6 +85,7 @@ pub const KNOWN_COMMAND_TYPES: &[&str] = &[
     "abort_bash",
     "cancel_rlm_child",
     "delete_rlm_subagent",
+    "control_external_subagent",
     "wait_for_idle",
     "wait_for_headless_completion",
     "get_session_header",
@@ -252,7 +253,7 @@ fn parse_daemon_command_value(
                 Some(_) => {
                     return Err(EnvelopeParseError::Invalid(
                         "clientId must be a string".into(),
-                    ))
+                    ));
                 }
             };
             let command_value = obj.remove("command").ok_or_else(|| {
@@ -685,6 +686,9 @@ pub fn command_active_session_id(command: &DaemonCommand) -> Option<&str> {
         | DaemonCommand::FactoryActivity {
             active_session_id, ..
         }
+        | DaemonCommand::ControlExternalSubagent {
+            active_session_id, ..
+        }
         | DaemonCommand::DeleteRlmSubagent {
             active_session_id, ..
         }
@@ -987,6 +991,7 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
         DaemonCommand::CancelRlmChild { .. } => "cancel_rlm_child",
         DaemonCommand::FactoryActivity { .. } => "factory_activity",
         DaemonCommand::DeleteRlmSubagent { .. } => "delete_rlm_subagent",
+        DaemonCommand::ControlExternalSubagent { .. } => "control_external_subagent",
         DaemonCommand::WaitForIdle { .. } => "wait_for_idle",
         DaemonCommand::WaitForHeadlessCompletion { .. } => "wait_for_headless_completion",
         DaemonCommand::GetSessionHeader { .. } => "get_session_header",
@@ -1071,6 +1076,26 @@ pub fn command_type_name(command: &DaemonCommand) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn external_controls_route_to_the_parent_session_plane() {
+        let line = json!({"type":"command", "id":"external", "protocol":current_protocol_info(),
+            "command":{"type":"control_external_subagent", "activeSessionId":"real-parent",
+                "target":"logical-child", "action":"focus"}})
+        .to_string();
+        let parsed = parse_daemon_command_line(&line).unwrap();
+        assert_eq!(
+            command_type_name(&parsed.command),
+            "control_external_subagent"
+        );
+        assert_eq!(
+            command_active_session_id(&parsed.command),
+            Some("real-parent")
+        );
+        assert!(pa_types::daemon::is_session_plane_daemon_command(
+            "control_external_subagent"
+        ));
+    }
 
     #[test]
     fn kernel_bash_activity_commands_are_session_scoped() {

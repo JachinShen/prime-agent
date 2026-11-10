@@ -1,0 +1,250 @@
+{
+  "result": {
+    "ts_revision": "7d442aafa985f9342134fac16c2ef41f03fb45c1",
+    "matched_top_level_rows": 6,
+    "matched_native_actions": 4,
+    "matched_roster_entries": 4,
+    "native_receipt_target_bytes_equal": true,
+    "known_rendering_differences": [
+      {
+        "width": 48,
+        "identity": "agent:/x/idle.jsonl#review",
+        "difference": "native child indent: Rust4 vs TS2 (existing before feature)"
+      },
+      {
+        "width": 56,
+        "identity": "agent:/x/idle.jsonl#review",
+        "difference": "native child indent: Rust4 vs TS2 (existing before feature)"
+      }
+    ],
+    "scope": "Text cells at 48/56 columns; native open/reply selection and native receipt target; excludes full-frame styling and Herdr feature"
+  },
+  "typescript": {
+    "rendered": [
+      {
+        "width": 48,
+        "legend": "Session                 Model          Cost  Age",
+        "rows": [
+          "• Review API            model         $1.25   1s",
+          "◇ 检查相同字符 sheet    model         $1.25   1s",
+          "• Saved notes           model         $1.25   1s",
+          "  • Native child        model         $1.25   1s"
+        ]
+      },
+      {
+        "width": 56,
+        "legend": "Session                       Model          Cost  Age  ",
+        "rows": [
+          "• Review API                  model         $1.25   1s  ",
+          "◇ 检查相同字符 sheet          model         $1.25   1s  ",
+          "• Saved notes                 model         $1.25   1s  ",
+          "  • Native child              model         $1.25   1s  "
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "identity": "file:/x/idle.jsonl",
+        "open": {
+          "selection": "attach",
+          "target": "idle-live",
+          "ancestors": []
+        },
+        "replyArmed": true,
+        "replyKey": "idle-live",
+        "reply": {
+          "key": "idle-live",
+          "text": "Follow up",
+          "activeSessionId": "idle-live",
+          "sessionFile": "/x/idle.jsonl"
+        }
+      },
+      {
+        "identity": "file:/x/running.jsonl",
+        "open": {
+          "selection": "attach",
+          "target": "running-live",
+          "ancestors": []
+        },
+        "replyArmed": true,
+        "replyKey": "running-live",
+        "reply": {
+          "key": "running-live",
+          "text": "Follow up",
+          "activeSessionId": "running-live",
+          "sessionFile": "/x/running.jsonl"
+        }
+      },
+      {
+        "identity": "file:/x/saved.jsonl",
+        "open": {
+          "selection": "resume",
+          "target": "/x/saved.jsonl",
+          "ancestors": []
+        },
+        "replyArmed": true,
+        "replyKey": "saved",
+        "reply": {
+          "key": "saved",
+          "text": "Follow up",
+          "activeSessionId": null,
+          "sessionFile": "/x/saved.jsonl"
+        }
+      },
+      {
+        "identity": "agent:/x/idle.jsonl#review",
+        "open": {
+          "selection": "attach",
+          "target": "child-live",
+          "ancestors": [
+            "idle"
+          ]
+        },
+        "replyArmed": false,
+        "replyKey": null,
+        "reply": null
+      }
+    ],
+    "roster": [
+      {
+        "identity": "file:/x/idle.jsonl",
+        "agentId": "idle",
+        "status": "idle"
+      },
+      {
+        "identity": "file:/x/running.jsonl",
+        "agentId": "running",
+        "status": "running"
+      },
+      {
+        "identity": "file:/x/saved.jsonl",
+        "agentId": "saved",
+        "status": "inactive"
+      },
+      {
+        "identity": "agent:/x/idle.jsonl#review",
+        "agentId": "/x/idle.jsonl#review",
+        "status": "idle"
+      }
+    ],
+    "nativeReceiptTarget": {
+      "activeSessionId": "sib-1",
+      "sessionId": "sib-1-session",
+      "runtimeKind": "top-level"
+    }
+  },
+  "rust": {
+    "rendered": [
+      {
+        "width": 48,
+        "legend": "Session                 Model          Cost  Age",
+        "rows": [
+          "• Review API            model         $1.25   1s",
+          "◇ 检查相同字符 sheet    model         $1.25   1s",
+          "• Saved notes           model         $1.25   1s",
+          "    • Native child      model         $1.25   1s"
+        ]
+      },
+      {
+        "width": 56,
+        "legend": "Session                       Model          Cost  Age  ",
+        "rows": [
+          "• Review API                  model         $1.25   1s  ",
+          "◇ 检查相同字符 sheet          model         $1.25   1s",
+          "• Saved notes                 model         $1.25   1s",
+          "    • Native child            model         $1.25   1s"
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "identity": "file:/x/idle.jsonl",
+        "open": {
+          "selection": "attach",
+          "target": "idle-live",
+          "ancestors": []
+        },
+        "replyArmed": true,
+        "replyKey": "idle-live",
+        "reply": {
+          "key": "idle-live",
+          "text": "Follow up",
+          "activeSessionId": "idle-live",
+          "sessionFile": "/x/idle.jsonl"
+        }
+      },
+      {
+        "identity": "file:/x/running.jsonl",
+        "open": {
+          "selection": "attach",
+          "target": "running-live",
+          "ancestors": []
+        },
+        "replyArmed": true,
+        "replyKey": "running-live",
+        "reply": {
+          "key": "running-live",
+          "text": "Follow up",
+          "activeSessionId": "running-live",
+          "sessionFile": "/x/running.jsonl"
+        }
+      },
+      {
+        "identity": "file:/x/saved.jsonl",
+        "open": {
+          "selection": "resume",
+          "target": "/x/saved.jsonl",
+          "ancestors": []
+        },
+        "replyArmed": true,
+        "replyKey": "saved",
+        "reply": {
+          "key": "saved",
+          "text": "Follow up",
+          "activeSessionId": null,
+          "sessionFile": "/x/saved.jsonl"
+        }
+      },
+      {
+        "identity": "agent:/x/idle.jsonl#review",
+        "open": {
+          "selection": "attach",
+          "target": "child-live",
+          "ancestors": [
+            "idle"
+          ]
+        },
+        "replyArmed": false,
+        "replyKey": null,
+        "reply": null
+      }
+    ],
+    "roster": [
+      {
+        "identity": "file:/x/idle.jsonl",
+        "agentId": "idle",
+        "status": "idle"
+      },
+      {
+        "identity": "file:/x/running.jsonl",
+        "agentId": "running",
+        "status": "running"
+      },
+      {
+        "identity": "file:/x/saved.jsonl",
+        "agentId": "saved",
+        "status": "inactive"
+      },
+      {
+        "identity": "agent:/x/idle.jsonl#review",
+        "agentId": "/x/idle.jsonl#review",
+        "status": "idle"
+      }
+    ]
+  },
+  "rust_native_receipt_target": {
+    "activeSessionId": "sib-1",
+    "sessionId": "sib-1-session",
+    "runtimeKind": "top-level"
+  }
+}

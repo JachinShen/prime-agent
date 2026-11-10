@@ -1,7 +1,7 @@
 //! The controller test battery: family roster, direct peer delivery,
 //! fallback, and observe families.
 
-use super::observe::summaries_from_roster;
+use super::observe::{external_summaries_from_roster, find_target, summaries_from_roster};
 use super::*;
 use crate::protocol::{response_failure, response_success};
 use crate::rlm_children::RlmChildIdentity;
@@ -1241,4 +1241,84 @@ async fn observe_recent_suffix_does_not_read_a_foreign_transcript() {
         .await
         .unwrap_err();
     assert_eq!(error.to_string(), "agent ddd444 is not reachable");
+}
+
+fn external_observe_roster_row() -> Value {
+    json!({
+        "id": "sub-external", "rlmChildId": "sub-external", "sessionName": "review",
+        "activeSessionId": null, "sessionId": null,
+        "taskState": "running", "activity": "working", "runtimeResident": true,
+        "external": {
+            "agent": "codex", "workspace_id": "w1", "pane_id": "w1:p2",
+            "terminal_id": "term-2", "agent_name": "pa-review", "turn": 1,
+            "state": "blocked", "answer_truncated": false,
+        },
+    })
+}
+
+#[test]
+fn external_observe_uses_runtime_residency_and_logical_child_selectors() {
+    let running = external_observe_roster_row();
+    let mut idle = running.clone();
+    idle["rlmChildId"] = json!("sub-idle");
+    idle["sessionName"] = json!("idle-review");
+    idle["taskState"] = json!("completed");
+    idle["activity"] = json!("idle");
+    let mut inactive = idle.clone();
+    inactive["rlmChildId"] = json!("sub-closed");
+    inactive["sessionName"] = json!("closed-review");
+    inactive["runtimeResident"] = json!(false);
+    let rows = external_summaries_from_roster(vec![running, idle, inactive]).unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|row| (
+                row.active_session_id.clone(),
+                row.session_id.clone(),
+                row.status
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (None, String::new(), AgentFamilyStatus::Running),
+            (None, String::new(), AgentFamilyStatus::Idle),
+            (None, String::new(), AgentFamilyStatus::Inactive),
+        ]
+    );
+    for selector in ["sub-external", "external", "review"] {
+        let selected = find_target(rows.clone(), selector).unwrap().unwrap();
+        assert_eq!(selected.rlm_child_id.as_deref(), Some("sub-external"));
+    }
+    let mut collision = external_observe_roster_row();
+    collision["rlmChildId"] = json!("sub-another");
+    collision["sessionName"] = json!("sub-external");
+    let mut ambiguous = rows;
+    ambiguous.extend(external_summaries_from_roster(vec![collision]).unwrap());
+    assert_eq!(
+        find_target(ambiguous, "sub-external")
+            .unwrap()
+            .unwrap()
+            .rlm_child_id
+            .as_deref(),
+        Some("sub-external")
+    );
+}
+
+#[test]
+fn external_observe_rejects_malformed_registry_rows() {
+    for field in [
+        "external",
+        "rlmChildId",
+        "taskState",
+        "activity",
+        "runtimeResident",
+    ] {
+        let mut row = external_observe_roster_row();
+        row.as_object_mut().unwrap().remove(field);
+        assert!(
+            external_summaries_from_roster(vec![row]).is_err(),
+            "missing {field} must remain visible"
+        );
+    }
+    let mut row = external_observe_roster_row();
+    row["external"]["unexpected"] = json!(true);
+    assert!(external_summaries_from_roster(vec![row]).is_err());
 }

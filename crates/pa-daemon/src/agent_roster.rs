@@ -198,6 +198,94 @@ impl AgentRoster {
         )
     }
 
+    /// Project external children owned by a real parent worker. Validate the whole
+    /// snapshot before replacing any rows, so malformed evidence never removes children.
+    pub(crate) fn write_external_subagents(
+        &mut self,
+        parent: &Value,
+        worker_id: &str,
+    ) -> anyhow::Result<(Vec<AgentRosterEntry>, Vec<String>)> {
+        let snapshots: Vec<Value> = parent
+            .get("externalSubagents")
+            .map(|value| serde_json::from_value(value.clone()))
+            .transpose()?
+            .unwrap_or_default();
+        anyhow::ensure!(
+            snapshots.is_empty()
+                || parent
+                    .get("activeSessionId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.is_empty()),
+            "External subagent roster requires a live parent activeSessionId"
+        );
+        let mut summaries = Vec::with_capacity(snapshots.len());
+        let mut ids = std::collections::HashSet::new();
+        for mut summary in snapshots {
+            anyhow::ensure!(
+                summary.is_object(),
+                "External subagent summary must be an object"
+            );
+            let child = summary
+                .get("rlmChildId")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| anyhow::anyhow!("External subagent summary requires rlmChildId"))?
+                .to_string();
+            anyhow::ensure!(
+                ids.insert(child.clone()),
+                "Duplicate external subagent: {child}"
+            );
+            let external = summary.get("external").ok_or_else(|| {
+                anyhow::anyhow!("External subagent {child} requires runtime metadata")
+            })?;
+            serde_json::from_value::<pa_types::daemon::external_subagent::ExternalSubagentInfo>(
+                external.clone(),
+            )?;
+            anyhow::ensure!(
+                summary
+                    .get("runtimeResident")
+                    .and_then(Value::as_bool)
+                    .is_some(),
+                "External subagent {child} requires runtimeResident"
+            );
+            summary["backend"] = serde_json::json!("herdr");
+            summary["runtimeKind"] = serde_json::json!("subagent");
+            summary["activeSessionId"] = Value::Null;
+            summary["sessionId"] = Value::Null;
+            summary.as_object_mut().unwrap().remove("sessionFile");
+            summary["parentActiveSessionId"] = parent
+                .get("activeSessionId")
+                .cloned()
+                .unwrap_or(Value::Null);
+            summary["parentSessionId"] = parent.get("sessionId").cloned().unwrap_or(Value::Null);
+            summary["parentSessionPath"] =
+                parent.get("sessionFile").cloned().unwrap_or(Value::Null);
+            summaries.push(summary);
+        }
+        let previous: Vec<String> = self
+            .entries_for_worker(worker_id)
+            .into_iter()
+            .filter(|entry| entry.summary.get("backend").and_then(Value::as_str) == Some("herdr"))
+            .map(|entry| entry.agent_id.clone())
+            .collect();
+        let changed: Vec<AgentRosterEntry> = summaries
+            .into_iter()
+            .map(|summary| self.write_summary(summary, Some(worker_id), None))
+            .collect();
+        let fresh: std::collections::HashSet<&str> = changed
+            .iter()
+            .map(|entry| entry.agent_id.as_str())
+            .collect();
+        let removed: Vec<String> = previous
+            .into_iter()
+            .filter(|id| !fresh.contains(id.as_str()))
+            .collect();
+        for id in &removed {
+            self.delete(id);
+        }
+        Ok((changed, removed))
+    }
+
     /// Store one ledger-seeded entry (TS `write` of a boot-seed `WorkerRosterEntry`): no
     /// worker owner, no status label, `seededCwd` when the cwd could not be hydrated.
     pub(crate) fn write_seeded(&mut self, summary: Value, seeded_cwd: bool) -> AgentRosterEntry {
@@ -474,6 +562,59 @@ mod tests {
             "sessionFile": file,
             "activity": "idle",
         })
+    }
+
+    fn external_snapshot() -> Value {
+        json!({"rlmChildId": "review", "sessionName": "review", "runtimeResident": true,
+            "activity": "working", "external": {"agent": "codex", "workspace_id": "w",
+                "pane_id": "p", "terminal_id": "t", "agent_name": "review", "turn": 1,
+                "state": "running", "answer_truncated": false},
+            "activeSessionId": "forged-child-session", "sessionFile": "/forged/file"})
+    }
+
+    #[test]
+    fn external_children_project_under_real_parent_and_are_removed_authoritatively() {
+        let mut roster = AgentRoster::new();
+        let mut parent = summary("parent", Some("parent-live"), Some("/parent.jsonl"));
+        parent["externalSubagents"] = json!([external_snapshot()]);
+        let (changed, removed) = roster
+            .write_external_subagents(&parent, "real-parent-worker")
+            .unwrap();
+        assert!(removed.is_empty());
+        assert_eq!(changed.len(), 1);
+        let child = &changed[0];
+        assert_eq!(child.agent_id, "/parent.jsonl#review");
+        assert_eq!(child.worker_id.as_deref(), Some("real-parent-worker"));
+        assert_eq!(child.status, AgentRosterStatus::Running);
+        assert_eq!(child.summary["parentActiveSessionId"], "parent-live");
+        assert!(child.summary["activeSessionId"].is_null());
+        assert!(child.summary["sessionId"].is_null());
+        assert!(child.summary.get("sessionFile").is_none());
+        assert!(roster
+            .by_active_session_id("forged-child-session")
+            .is_none());
+        parent["externalSubagents"] = json!([]);
+        assert_eq!(
+            roster
+                .write_external_subagents(&parent, "real-parent-worker")
+                .unwrap(),
+            (Vec::new(), vec!["/parent.jsonl#review".to_string()])
+        );
+        assert!(roster.get("/parent.jsonl#review").is_none());
+    }
+
+    #[test]
+    fn malformed_external_snapshot_fails_without_deleting_existing_children() {
+        let mut roster = AgentRoster::new();
+        let mut parent = summary("parent", Some("parent-live"), Some("/parent.jsonl"));
+        parent["externalSubagents"] = json!([external_snapshot()]);
+        let original = roster
+            .write_external_subagents(&parent, "worker")
+            .unwrap()
+            .0;
+        parent["externalSubagents"] = json!([{"rlmChildId": "broken"}]);
+        assert!(roster.write_external_subagents(&parent, "worker").is_err());
+        assert_eq!(roster.get("/parent.jsonl#review"), original.first());
     }
 
     #[test]

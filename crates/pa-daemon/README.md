@@ -77,6 +77,17 @@ files), so passivated children stay roster-visible (TS
 `walkPassiveRlmSubagents` / `withPassiveRlmDescendantInfos`). The saved
 session scan (`session_store.rs`) folds each file once into the durable
 catalog row.
+External subagents use Herdr's agent API through their owning parent worker.
+Optional worktrees use Herdr's `worktree.create` API and its dedicated workspace.
+Checkout identity is persisted with the child; follow-up turns reuse it, and pane
+closure preserves the checkout and branch. Creation errors never fall back to
+running in the parent's working tree.
+The parent summary's cached `externalSubagents` snapshots project into independent
+roster rows keyed by parent and logical child id. These rows carry explicit runtime
+residency and external terminal identity; they have no child worker or session file.
+The session-plane `control_external_subagent` command routes focus, read, keys,
+stop, close, and follow-up sends through the real parent active-session id.
+The TUI uses this daemon command and never connects to Herdr directly.
 Supervisor-backed RLM child sessions
 (`rlm_children.rs`, the daemon side of the pa-core `RlmSubagentHost` seam):
 `rlm.spawn`/`rlm.create_session` create real daemon sessions through the
