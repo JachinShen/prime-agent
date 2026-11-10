@@ -400,6 +400,9 @@ fn multi_steer_parked_mid_run_co_delivers_as_one_batched_turn() {
 
 /// A real kernel task survives its cell, wakes an idle worker, and admits
 /// another notification while the model's foreground cell is still waiting.
+// The raw-string hashes keep rustfmt from re-indenting the multi-line Python
+// snippet on every run (it oscillates without them).
+#[allow(clippy::needless_raw_string_hashes)]
 #[tokio::test]
 async fn coroutine_notifications_wake_idle_agents_and_queue_while_busy() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};

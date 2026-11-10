@@ -77,6 +77,9 @@ cargo build --locked -p pa-cli --bin prime-agent
 nix flake check
 ```
 
+The dev shell pins Rust 1.98.1 through `rust-overlay` so local `cargo fmt`,
+`cargo clippy`, and tests use the same compiler as the CI merge gates.
+
 `nix flake check` builds the package with its install checks and runs the
 notification tests against the installed Python runtime, including a background
 coroutine that sends notifications after its cell has returned.

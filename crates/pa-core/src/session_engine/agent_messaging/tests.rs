@@ -684,6 +684,9 @@ async fn external_observe_keeps_terminal_evidence_separate_from_assistant_messag
 
 #[test]
 fn external_receipts_keep_logical_child_identity_and_kernel_display_without_fake_sessions() {
+    use crate::kernel::shared::{
+        KernelSentAgentMessage, ReceiverRole, SentAgentMessageTarget, SentDeliveryStatus,
+    };
     let receipt = AgentMessageReceipt {
         id: "agentmsg_external".to_string(),
         target: "child-review".to_string(),
@@ -708,9 +711,6 @@ fn external_receipts_keep_logical_child_identity_and_kernel_display_without_fake
             "receiverRole":"child", "deliveredAt":null, "queuedAt":"now",
         })
     );
-    use crate::kernel::shared::{
-        KernelSentAgentMessage, ReceiverRole, SentAgentMessageTarget, SentDeliveryStatus,
-    };
     assert_eq!(
         crate::kernel::shared::parse_sent_agent_message(&value),
         Some(KernelSentAgentMessage {

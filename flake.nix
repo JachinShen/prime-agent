@@ -7,9 +7,13 @@
       url = "github:numtide/llm-agents.nix/98309b147b1c011b7d3c16d63402ca7b6805e952";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, llm-agents, ... }:
+  outputs = { self, nixpkgs, llm-agents, rust-overlay, ... }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
@@ -41,11 +45,21 @@
 
       devShells = forAllSystems (system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          # CI pins Rust 1.98.1 through the dtolnay/rust-toolchain action SHA
+          # (the action has no toolchain input to bump); use the same compiler
+          # here so `make check` exercises the merge-gate lints, not a newer
+          # clippy's lint set.
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ rust-overlay.overlays.default ];
+          };
+          rust = pkgs.rust-bin.stable."1.98.1".minimal.override {
+            extensions = [ "rustfmt" "clippy" ];
+          };
           python = self.packages.${system}.default.pythonRuntime;
         in {
           default = pkgs.mkShell {
-            packages = with pkgs; [ cargo rustc rustfmt clippy python ];
+            packages = [ rust python ];
             PRIME_AGENT_KERNEL_PYTHON = "${python}/bin/python3";
           };
         });
