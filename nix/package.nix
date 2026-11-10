@@ -12,6 +12,9 @@ in base.overrideAttrs (oldAttrs: {
   inherit src;
   version = (builtins.fromTOML (builtins.readFile "${src}/Cargo.toml")).workspace.package.version;
 
+  # The personal fork has its own Cargo.lock; keep the vendor hash in sync with it.
+  cargoHash = "sha256-IEqwXSPNn2N9/B3M8JktSzqfI258mE5nK3I85snlovM=";
+
   # Keep the runtime, skills, catalogs, and dependency closure from the pinned recipe;
   # both Rust and Python are built from this checkout through finalAttrs.src.
   installPhase = assert lib.hasInfix "--set PRIME_AGENT_KERNEL_PYTHON" oldAttrs.installPhase;
