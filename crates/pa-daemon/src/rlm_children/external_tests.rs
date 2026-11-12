@@ -13,6 +13,8 @@ const TEST_BUDGET: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 struct Faults {
+    tab_error: bool,
+    malformed_tab: bool,
     worktree_error: bool,
     malformed_worktree: bool,
     start_error: Option<&'static str>,
@@ -59,7 +61,7 @@ impl Fixture {
         let supervisor_listener = bind_transport(&supervisor_path).await.unwrap();
         let agent = Arc::new(Mutex::new(json!({
             "name":"not-started", "agent":"codex", "workspace_id":"w1",
-            "pane_id":"w1:p2", "terminal_id":"terminal-child", "tab_id":"w1:t1",
+            "pane_id":"w1:p2", "terminal_id":"terminal-child", "tab_id":"w1:t2",
             "focused":false, "revision":3,
             "agent_status":"idle", "state_change_seq":10, "completion_seq":10,
             "interactive_ready":true,
@@ -115,6 +117,11 @@ impl Fixture {
                                     return;
                                 }
                             }
+                            if method == "tab.create" && faults.lock().unwrap().tab_error {
+                                let response=json!({"id":request["id"],"error":{"code":"tab_create_failed","message":"tab allocation refused"}});
+                                writer.write_all(format!("{response}\n").as_bytes()).await.unwrap();
+                                return;
+                            }
                             if method == "worktree.create" && faults.lock().unwrap().worktree_error {
                                 let response=json!({"id":request["id"],"error":{"code":"worktree_create_failed","message":"branch already exists"}});
                                 writer.write_all(format!("{response}\n").as_bytes()).await.unwrap();
@@ -142,17 +149,18 @@ impl Fixture {
                             }
                             let result = match method {
                                 "pane.get" => json!({"pane":{"pane_id":"w1:p1","workspace_id":"w1","terminal_id":"terminal-parent"}}),
-                                "pane.layout" => json!({"layout":{"panes":[{"pane_id":"w1:p1","rect":{"width":180,"height":50}}]}}),
                                 "pane.process_info" => {
                                     let foreground = faults.lock().unwrap().foreground_processes.clone()
                                         .unwrap_or_else(|| vec![json!({"pid":42})]);
                                     json!({"process_info":{"shell_pid":42,"foreground_processes":foreground}})
                                 }
-                                "pane.split" => {
-                                    assert_eq!(request["params"]["target_pane_id"], "w1:p1");
-                                    assert_eq!(request["params"]["workspace_id"], "w1");
-                                    assert_eq!(request["params"]["focus"], false);
-                                    json!({"pane":{"pane_id":"w1:p2","workspace_id":"w1","terminal_id":"terminal-child"}})
+                                "tab.create" => {
+                                    if faults.lock().unwrap().malformed_tab {
+                                        json!({"tab":{"tab_id":"w1:t2","workspace_id":"w1"}})
+                                    } else {
+                                        json!({"tab":{"tab_id":"w1:t2","workspace_id":"w1"},
+                                            "root_pane":{"pane_id":"w1:p2","tab_id":"w1:t2","workspace_id":"w1","terminal_id":"terminal-child"}})
+                                    }
                                 }
                                 "worktree.create" => {
                                     assert_eq!(request["params"]["focus"],false);
@@ -423,7 +431,7 @@ async fn external_worktree_admission_preserves_branch_results_and_checkout_after
             .lock()
             .unwrap()
             .iter()
-            .any(|r| r["method"] == "pane.split"));
+            .any(|r| r["method"] == "tab.create"));
         let worktree = info.worktree.unwrap();
         assert_eq!(worktree.branch, expected_branch);
         let rows = fixture.sessions.external_roster_summaries();
@@ -497,8 +505,55 @@ async fn external_worktree_failure_never_falls_back_to_parent_checkout() {
         );
         assert!(!history.iter().any(|r| matches!(
             r["method"].as_str(),
-            Some("pane.split" | "agent.start" | "agent.prompt" | "worktree.remove")
+            Some("tab.create" | "agent.start" | "agent.prompt" | "worktree.remove")
         )));
+    }
+}
+
+#[tokio::test]
+async fn external_spawn_creates_a_named_background_tab_in_the_parent_workspace() {
+    let fixture = Fixture::new().await;
+    let handle = fixture.sessions.spawn(request()).await.unwrap();
+    let created: Vec<Value> = fixture
+        .history
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| request["method"] == "tab.create")
+        .map(|request| request["params"].clone())
+        .collect();
+    assert_eq!(
+        created,
+        vec![json!({"workspace_id":"w1","cwd":fixture._directory.path(),
+            "label":"review-api","focus":false})]
+    );
+    let info = handle.external.unwrap();
+    assert_eq!(
+        json!({"workspace":info.workspace_id,"pane":info.pane_id,"terminal":info.terminal_id}),
+        json!({"workspace":"w1","pane":"w1:p2","terminal":"terminal-child"})
+    );
+}
+
+#[tokio::test]
+async fn external_tab_allocation_errors_are_explicit_and_never_retried() {
+    for malformed in [false, true] {
+        let fixture = Fixture::new().await;
+        fixture.faults.lock().unwrap().tab_error = !malformed;
+        fixture.faults.lock().unwrap().malformed_tab = malformed;
+        let error = fixture.sessions.spawn(request()).await.unwrap_err();
+        assert!(format!("{error:#}").contains(if malformed {
+            "Herdr tab.create returned no root pane"
+        } else {
+            "tab allocation refused"
+        }));
+        let methods: Vec<String> = fixture
+            .history
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request["method"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(methods, vec!["pane.get", "tab.create"]);
     }
 }
 

@@ -290,10 +290,6 @@ impl SupervisorChildSessionsInner {
         let pane = client
             .request("pane.get", json!({"pane_id":caller}), API_BUDGET)
             .await?;
-        let caller = pane
-            .pointer("/pane/pane_id")
-            .and_then(Value::as_str)
-            .context("Herdr caller pane missing in response")?;
         let workspace = pane
             .pointer("/pane/workspace_id")
             .and_then(Value::as_str)
@@ -315,35 +311,17 @@ impl SupervisorChildSessionsInner {
             .await?;
             (created.pane, created.workspace_id, Some(created.worktree))
         } else {
-            let layout = client
-                .request("pane.layout", json!({"pane_id":caller}), API_BUDGET)
-                .await?;
-            let geometry = layout
-                .pointer("/layout/panes")
-                .and_then(Value::as_array)
-                .and_then(|panes| {
-                    panes
-                        .iter()
-                        .find(|pane| pane.get("pane_id").and_then(Value::as_str) == Some(caller))
-                })
-                .and_then(|pane| pane.get("rect"))
-                .context("Herdr layout omitted caller pane geometry")?;
-            let width = geometry
-                .get("width")
-                .and_then(Value::as_u64)
-                .context("Herdr pane width missing")?;
-            let direction = if width >= 140 { "right" } else { "down" };
-            let split = client
+            let created = client
                 .request(
-                    "pane.split",
-                    json!({"target_pane_id":caller,"workspace_id":workspace,
-            "direction":direction,"cwd":identity.cwd,"focus":false,"ratio":0.6}),
+                    "tab.create",
+                    json!({"workspace_id":workspace,"cwd":identity.cwd,
+                        "label":name,"focus":false}),
                     API_BUDGET,
                 )
                 .await?;
-            let pane = split
-                .get("pane")
-                .context("Herdr pane.split returned no pane")?;
+            let pane = created
+                .get("root_pane")
+                .context("Herdr tab.create returned no root pane")?;
             (pane.clone(), workspace.to_string(), None)
         };
         let pane_id = required_str(&pane, "pane_id")?.to_string();
@@ -404,7 +382,7 @@ impl SupervisorChildSessionsInner {
         self.external_changed().await;
         let start_info = record.lock().await.info.clone();
         let started = async {
-            // Splitting allocates a terminal before its shell has finished startup.
+            // Creating a tab allocates its terminal before shell startup finishes.
             // Foreground ownership precedes Herdr's shell-integration readiness.
             tokio::time::timeout(Duration::from_secs(30), async {
                 let mut poll = tokio::time::interval(Duration::from_millis(100));

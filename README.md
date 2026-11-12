@@ -138,8 +138,9 @@ results = await rlm.collect(h)
 await agent_message.send("Also review the retry path", receiver_role="child", receiver_name=h.name)
 ```
 
-Each child gets a pane in the caller's workspace. Follow-up tasks reuse that pane
-and agent session. Herdr-supported agent kinds use the same interface; pass native
+Each child opens a named background tab in the caller's workspace, preserving the
+current tab and focus. Follow-up tasks reuse that tab's pane and agent session.
+Herdr-supported agent kinds use the same interface; pass native
 CLI arguments through `agent_args=[...]`. Each turn writes its final answer to a
 separate `answer.md`; `collect` returns the answer and path. `rlm.subagent_read(h)`
 returns terminal evidence, and `/agents` can open the pane or send a reply.

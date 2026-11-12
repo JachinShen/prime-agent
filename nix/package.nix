@@ -1,4 +1,9 @@
-{ lib, callPackage, coreutils, python3, llm-agents, src
+{ lib
+, callPackage
+, coreutils
+, python3
+, llm-agents
+, src
 , extraPythonPackages ? (_: [ ])
 }:
 
@@ -8,12 +13,20 @@ let
     inherit python3 extraPythonPackages;
     versionCheckHomeHook = callPackage "${llm-agents}/packages/versionCheckHomeHook/package.nix" { };
   };
-in base.overrideAttrs (oldAttrs: {
+in
+base.overrideAttrs (oldAttrs: {
   inherit src;
   version = (builtins.fromTOML (builtins.readFile "${src}/Cargo.toml")).workspace.package.version;
 
   # The personal fork has its own Cargo.lock; keep the vendor hash in sync with it.
   cargoHash = "sha256-IEqwXSPNn2N9/B3M8JktSzqfI258mE5nK3I85snlovM=";
+
+  passthru = oldAttrs.passthru // {
+    unwrapped = oldAttrs.passthru.unwrapped.overrideAttrs (_: {
+      doCheck = true;
+      cargoTestFlags = [ "-p" "pa-daemon" "--lib" "rlm_children::external_tests::" ];
+    });
+  };
 
   # Keep the runtime, skills, catalogs, and dependency closure from the pinned recipe;
   # both Rust and Python are built from this checkout through finalAttrs.src.
