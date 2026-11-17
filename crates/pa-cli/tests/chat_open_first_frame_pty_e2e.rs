@@ -53,7 +53,9 @@ fn chat_open_first_frame_child_mode() {
         .enable_all()
         .build()
         .expect("tokio runtime");
-    let _ = runtime.block_on(run_interactive(options, UiMode::Terminal));
+    runtime
+        .block_on(run_interactive(options, UiMode::Terminal))
+        .expect("interactive client");
 }
 
 /// The pty harnesses serialize: each drives a raw pty; concurrent byte-level waits flake on the
@@ -81,11 +83,33 @@ fn chat_open_first_frame_pins_the_first_paint() {
     harness.wait_from_start("probe", "the pinned title row painted");
     harness.wait_from_start("\u{25f7} 1 heartbeat", "the dock panel painted");
     harness.wait_from_start("\x1b[>7u", "the kitty keyboard flags enabled");
+    harness.wait_from_start(
+        "\x1b]7501;state=idle:app=prime-agent\x1b\\",
+        "the attached agent reported idle",
+    );
 
     // Let the surface settle so the audit covers every repaint the open can produce, then read the
     // whole byte stream.
     harness.drain_until_quiet(10);
     let collected = harness.output();
+    // Deliver the entire turn as one socket burst. Status must preserve the working transition
+    // even when the renderer folds the queued frames into one paint.
+    harness
+        .events
+        .send(vec![
+            json!({"type":"turn_start"}),
+            json!({"type":"turn_end"}),
+            json!({"type":"agent_end"}),
+        ])
+        .unwrap();
+    harness.wait_from_start(
+        "\x1b]7501;state=working:app=prime-agent\x1b\\",
+        "the turn reported working",
+    );
+    harness.wait_from_start(
+        "\x1b]7501;state=done:app=prime-agent\x1b\\",
+        "the turn reported done",
+    );
     harness.finish();
     let stream: &[u8] = &collected;
 
@@ -143,13 +167,16 @@ struct ChatOpenHarness {
     /// The mock-supervisor server thread's join handle (it exits with the child's connection).
     _server: std::thread::JoinHandle<()>,
     master: PtyReader,
+    events: std::sync::mpsc::Sender<Vec<Value>>,
+    _directory: tempfile::TempDir,
 }
 
 impl ChatOpenHarness {
     fn start() -> ChatOpenHarness {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let socket = dir.path().join("tui.sock");
-        let supervisor = MockSupervisor::bind(&socket);
+        let (events, receiver) = std::sync::mpsc::channel();
+        let supervisor = MockSupervisor::bind(&socket, receiver);
         let server = std::thread::spawn(move || supervisor.serve());
 
         let pty = openpty(
@@ -164,13 +191,12 @@ impl ChatOpenHarness {
         .expect("open pty");
 
         let child = spawn_child(&socket, &pty.slave);
-        // Leak the temp dir's socket path on purpose: the child needs it for
-        // the test's lifetime, and the whole tree dies with the child.
-        std::mem::forget(dir);
         ChatOpenHarness {
             child,
             _server: server,
             master: PtyReader::new(pty.master),
+            events,
+            _directory: dir,
         }
     }
 
@@ -189,6 +215,13 @@ impl ChatOpenHarness {
     fn finish(mut self) {
         let _ = self.child.kill();
         // Reap the child so no zombie is left behind.
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for ChatOpenHarness {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
@@ -287,6 +320,7 @@ fn spawn_child(socket: &std::path::Path, slave: &OwnedFd) -> Child {
         .env(CHILD_SOCKET_ENV, socket)
         .env("TERM", "xterm-ghostty")
         .env("TERM_PROGRAM", "ghostty")
+        .env("HC_TERMINAL_ID", "prime-status-pty-probe")
         .env_remove("TMUX")
         .env_remove("STY")
         .env_remove("ZELLIJ")
@@ -350,12 +384,14 @@ fn child_options(socket: PathBuf) -> InteractiveOptions {
 /// carries a settled exchange; the dock's data requests answer after the delay.
 struct MockSupervisor {
     listener: std::os::unix::net::UnixListener,
+    events: std::sync::mpsc::Receiver<Vec<Value>>,
 }
 
 impl MockSupervisor {
-    fn bind(socket: &std::path::Path) -> Self {
+    fn bind(socket: &std::path::Path, events: std::sync::mpsc::Receiver<Vec<Value>>) -> Self {
         MockSupervisor {
             listener: std::os::unix::net::UnixListener::bind(socket).expect("bind mock socket"),
+            events,
         }
     }
 
@@ -364,6 +400,27 @@ impl MockSupervisor {
             return;
         };
         let write_stream = stream.try_clone().expect("clone mock socket");
+        let mut event_stream = stream.try_clone().expect("clone event socket");
+        std::thread::spawn(move || {
+            let mut sequence = 0;
+            for events in self.events {
+                let mut batch = String::new();
+                for event in events {
+                    sequence += 1;
+                    batch.push_str(
+                        &serde_json::to_string(&json!({
+                            "type":"session_event", "activeSessionId":"s1",
+                            "event":event, "meta":{"sequence":sequence}
+                        }))
+                        .expect("serialize event"),
+                    );
+                    batch.push('\n');
+                }
+                event_stream
+                    .write_all(batch.as_bytes())
+                    .expect("write event batch");
+            }
+        });
         let mut writer = write_stream;
         let mut reader = std::io::BufReader::new(stream);
         write_json(

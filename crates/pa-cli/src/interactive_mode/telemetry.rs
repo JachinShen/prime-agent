@@ -384,6 +384,9 @@ mod tests {
         let telemetry = CliInteractionTelemetry::new(dir.path().to_path_buf(), agent_dir.clone());
         telemetry.scroll_used("page", false).await;
         telemetry.hyperlinks_active(true).await;
+        telemetry
+            .feature_outcome("herdr_status", "completed", None)
+            .await;
         telemetry.client_exit("session_request", false).await;
         telemetry.client_exit("ctrl_d", false).await;
         let mirror = std::fs::read_to_string(agent_dir.join("telemetry.jsonl")).unwrap();
@@ -395,6 +398,13 @@ mod tests {
         assert_eq!(exits.len(), 2);
         assert_eq!(exits[0]["properties"]["tui_scroll_count"], 1);
         assert_eq!(exits[0]["properties"]["tui_hyperlinks_enabled"], true);
+        assert_eq!(
+            exits[0]["properties"]["feature_herdr_status_completed_count"],
+            1
+        );
+        assert!(exits[1]["properties"]
+            .get("feature_herdr_status_completed_count")
+            .is_none());
         assert!(exits[1]["properties"].get("tui_scroll_count").is_none());
         assert!(exits[1]["properties"]
             .get("tui_hyperlinks_enabled")

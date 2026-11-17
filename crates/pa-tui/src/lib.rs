@@ -91,6 +91,7 @@ pub mod onboarding_choice;
 pub mod onboarding_flow;
 pub mod osc133;
 pub mod osc52;
+mod program_status;
 pub(crate) mod prompt_highlight;
 pub mod prompt_stash;
 pub mod provider_auth;

@@ -250,6 +250,10 @@ async fn run_interactive_surface(
         options.fullscreen_mouse,
         &surface_mounted,
     )?;
+    let mut program_status = renderer
+        .is_terminal()
+        .then(crate::program_status::ProgramStatus::for_terminal)
+        .flatten();
     // The startup chrome paints before the session loads only for a NEW
     // chat (TS `ui.start()` renders the banner once before the session
     // loads): the startup chrome carries the zero dock a fresh session
@@ -772,6 +776,16 @@ async fn run_interactive_surface(
     // iteration), and a pre-loaded queue would otherwise starve it — the
     // queued inputs would paint only their own deltas over a state the
     // verifier never saw rendered.
+    if let Some(status) = &mut program_status {
+        status.refresh(&session, &view)?;
+        if let Some(telemetry) = session.telemetry.clone() {
+            tokio::spawn(async move {
+                telemetry
+                    .feature_outcome("herdr_status", "completed", None)
+                    .await;
+            });
+        }
+    }
     if !pending.is_empty() && session.dirty {
         if let Some(renderer) = renderer.is_terminal_mut() {
             crate::app::draw(renderer, &mut view)?;
@@ -1337,11 +1351,19 @@ async fn run_interactive_surface(
                 events.recv().await
             } => {
                                 if let Some(event) = maybe_event {
-                    session.apply_client_event(event, &mut view);
+                    if let Some(status) = &mut program_status {
+                        status.apply_client_event(&mut session, event, &mut view)?;
+                    } else {
+                        session.apply_client_event(event, &mut view);
+                    }
                     // Batch the rest of the queued frames: a stream burst applies as one
                     // transcript pass instead of one full re-layout per frame.
                     while let Ok(event) = events.try_recv() {
-                        session.apply_client_event(event, &mut view);
+                        if let Some(status) = &mut program_status {
+                            status.apply_client_event(&mut session, event, &mut view)?;
+                        } else {
+                            session.apply_client_event(event, &mut view);
+                        }
                     }
                     // A settled turn or compaction refreshes the tray's context usage.
                     let compaction_settled = std::mem::take(&mut session.compaction_settled);
@@ -1476,7 +1498,11 @@ async fn run_interactive_surface(
                     // frame, then dies): drain every frame the reader already delivered before
                     // deciding, so the update's own reconnect driver owns the recovery.
                     while let Ok(event) = events.try_recv() {
-                        session.apply_client_event(event, &mut view);
+                        if let Some(status) = &mut program_status {
+                            status.apply_client_event(&mut session, event, &mut view)?;
+                        } else {
+                            session.apply_client_event(event, &mut view);
+                        }
                     }
                     if session.reconnect.is_some() {
                         session.dirty = true;
@@ -1983,6 +2009,9 @@ async fn run_interactive_surface(
         // after the select, right before the paint — because a loop-top refresh goes stale across
         // the select's sleep: the expiry wake would repaint the hint with the pre-sleep value.
         view.chrome.tray_override = session.tray_override(&view);
+        if let Some(status) = &mut program_status {
+            status.refresh(&session, &view)?;
+        }
 
         // The frame gate: at most one render per MIN_RENDER_INTERVAL_MS — every state change inside
         // the window coalesces into the next frame (a stream burst renders at most one frame per
@@ -2106,6 +2135,9 @@ async fn run_interactive_surface(
     // Agents-back and `/resume` hand the pane to the agents view; the alternate screen stays in
     // place for it (TS `stop({ preserveAltScreen: true })`).
     let preserve_alt_screen = session.open_agents_view;
+    if let Some(status) = &mut program_status {
+        status.clear()?;
+    }
     let outcome = InteractiveOutcome {
         active_session_id: session.active_session_id.clone(),
         session_id: session.session_id.clone(),

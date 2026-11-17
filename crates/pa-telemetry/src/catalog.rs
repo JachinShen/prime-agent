@@ -260,8 +260,18 @@ pub const AUTH_CATEGORIES: &[&str] = &[
 ];
 
 pub const FEATURE_NAMES: &[&str] = &[
-    "model", "login", "logout", "effort", "goal", "new", "resume", "fork", "clone", "tree",
+    "model",
+    "login",
+    "logout",
+    "effort",
+    "goal",
+    "new",
+    "resume",
+    "fork",
+    "clone",
+    "tree",
     "feedback",
+    "herdr_status",
 ];
 
 pub const FEATURE_OUTCOMES: &[&str] = &[
@@ -745,6 +755,11 @@ const AGENT_SESSION_ENDED: EventRule = EventRule {
         ("feature_tree_failed_count", optional(count())),
         ("feature_tree_canceled_count", optional(count())),
         ("feature_tree_unavailable_count", optional(count())),
+        ("feature_herdr_status_initiated_count", optional(count())),
+        ("feature_herdr_status_completed_count", optional(count())),
+        ("feature_herdr_status_failed_count", optional(count())),
+        ("feature_herdr_status_canceled_count", optional(count())),
+        ("feature_herdr_status_unavailable_count", optional(count())),
         ("feature_feedback_initiated_count", optional(count())),
         ("feature_feedback_completed_count", optional(count())),
         ("feature_feedback_failed_count", optional(count())),
@@ -1080,6 +1095,11 @@ const TUI_EXIT: EventRule = EventRule {
         ("feature_tree_failed_count", optional(count())),
         ("feature_tree_canceled_count", optional(count())),
         ("feature_tree_unavailable_count", optional(count())),
+        ("feature_herdr_status_initiated_count", optional(count())),
+        ("feature_herdr_status_completed_count", optional(count())),
+        ("feature_herdr_status_failed_count", optional(count())),
+        ("feature_herdr_status_canceled_count", optional(count())),
+        ("feature_herdr_status_unavailable_count", optional(count())),
         ("feature_feedback_initiated_count", optional(count())),
         ("feature_feedback_completed_count", optional(count())),
         ("feature_feedback_failed_count", optional(count())),
