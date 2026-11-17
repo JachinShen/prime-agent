@@ -893,7 +893,12 @@ mod tests {
         assert!(text[4].contains("Paste value"));
         assert_eq!(text[5], "", "the blank between the field and the actions");
         assert_eq!(
-            text[6], " Enter submit  Alt+C copy  Esc/Ctrl+C cancel",
+            text[6],
+            if cfg!(target_os = "macos") {
+                " Enter submit  Option+C copy  Esc/Ctrl+C cancel"
+            } else {
+                " Enter submit  Alt+C copy  Esc/Ctrl+C cancel"
+            },
             "the TS auth-actions row: {text:?}"
         );
         assert_eq!(text.len(), 7, "no bottom rule rides the prompt: {text:?}");

@@ -342,7 +342,11 @@ fn the_reply_hints_follow_the_target_state() {
     with_text.handle_key("h");
     assert_eq!(
         flat(&with_text.render_hints(120, None)),
-        "Enter send   Alt+Enter queue   Esc/Ctrl+C cancel"
+        if cfg!(target_os = "macos") {
+            "Enter send   Option+Enter queue   Esc/Ctrl+C cancel"
+        } else {
+            "Enter send   Alt+Enter queue   Esc/Ctrl+C cancel"
+        }
     );
     let saved = armed_saved();
     assert_eq!(

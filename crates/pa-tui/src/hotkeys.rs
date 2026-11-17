@@ -172,6 +172,8 @@ mod tests {
     fn guide_renders_default_keys() {
         let kb = KeybindingsManager::new();
         let guide = hotkeys_guide(&kb);
+        #[cfg(target_os = "macos")]
+        let guide = guide.replace("Option+", "Alt+");
         assert!(guide.contains("| `Ctrl+O` | Cycle overview"), "{guide}");
         assert!(
             guide.contains("| `Esc` | Clear input / cancel autocomplete |"),
@@ -217,6 +219,8 @@ mod tests {
         );
         let kb = KeybindingsManager::with_user_bindings(cfg);
         let guide = hotkeys_guide(&kb);
+        #[cfg(target_os = "macos")]
+        let guide = guide.replace("Option+", "Alt+");
         assert!(guide.contains("| `Ctrl+Alt+X` | Cycle overview"), "{guide}");
         assert!(!guide.contains("`Ctrl+O`"), "{guide}");
     }
@@ -230,7 +234,9 @@ mod tests {
         cfg.insert("app.tools.expand".to_string(), Vec::new());
         let kb = KeybindingsManager::with_user_bindings(cfg);
         let guide = hotkeys_guide(&kb);
+        #[cfg(target_os = "macos")]
+        let guide = guide.replace("Option+", "Alt+");
         assert!(guide.contains("| `` | Cycle overview"), "{guide}");
-        assert!(!guide.contains("Ctrl+O"), "{guide}");
+        assert!(!guide.contains("`Ctrl+O`"), "{guide}");
     }
 }
