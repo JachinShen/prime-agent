@@ -421,6 +421,8 @@ fn find_subsequence_last(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 fn spawn_child(socket: &Path, slave: &OwnedFd) -> Child {
     fn claim_controlling_tty(fd: i32) -> std::io::Result<()> {
         nix::unistd::setsid()?;
+        // ioctl request constants have different integer types across Unix targets.
+        #[allow(clippy::cast_lossless)]
         let rc = unsafe { libc::ioctl(fd, libc::TIOCSCTTY as libc::c_ulong, 0) };
         if rc < 0 {
             return Err(std::io::Error::last_os_error());

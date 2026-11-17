@@ -29,7 +29,7 @@ struct Faults {
 }
 
 struct Fixture {
-    _directory: tempfile::TempDir,
+    directory: tempfile::TempDir,
     sessions: SupervisorChildSessions,
     agent: Arc<Mutex<Value>>,
     history: Arc<std::sync::Mutex<Vec<Value>>>,
@@ -284,7 +284,7 @@ impl Fixture {
             update_tx.send(update).unwrap();
         }));
         Self {
-            _directory: directory,
+            directory,
             sessions,
             agent,
             history,
@@ -524,7 +524,7 @@ async fn external_spawn_creates_a_named_background_tab_in_the_parent_workspace()
         .collect();
     assert_eq!(
         created,
-        vec![json!({"workspace_id":"w1","cwd":fixture._directory.path(),
+        vec![json!({"workspace_id":"w1","cwd":fixture.directory.path(),
             "label":"review-api","focus":false})]
     );
     let info = handle.external.unwrap();

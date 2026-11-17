@@ -13,9 +13,11 @@
 //! (`prime-agent --mode daemon`), drive the TUI headlessly against a scripted
 //! daemon session, and assert on rendered frames plus daemon-side state. The
 //! `script` seam is the faux provider contract; the product never sets it.
-#![cfg(unix)]
+// Worker ownership and descriptor audits below inspect Linux's /proc filesystem.
+#![cfg(target_os = "linux")]
 
 use std::fmt::Write as _;
+#[cfg(target_os = "linux")]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -393,6 +395,7 @@ fn spawn_supervisor(dir: &Path) -> Supervisor {
     command.env("PA_DAEMON_WORKER_CONNECT_TIMEOUT_MS", "90000");
     // Die with this test binary: the kernel SIGKILLs a supervisor that gets
     // reparented to init; the guard's protocol teardown stays the exit path.
+    #[cfg(target_os = "linux")]
     unsafe {
         command.pre_exec(move || {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
